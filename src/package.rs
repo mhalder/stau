@@ -54,9 +54,10 @@ fn walk_directory(
             && matches!(
                 file_name_str.as_ref(),
                 ".git" | ".gitignore" | ".gitattributes" | ".gitmodules"
-            ) {
-                continue;
-            }
+            )
+        {
+            continue;
+        }
 
         let metadata = entry.metadata().map_err(StauError::Io)?;
 
@@ -101,12 +102,13 @@ pub fn list_packages(stau_dir: &Path) -> Result<Vec<String>> {
 
         // Only include directories, skip hidden directories
         if path.is_dir()
-            && let Some(name) = path.file_name() {
-                let name_str = name.to_string_lossy();
-                if !name_str.starts_with('.') {
-                    packages.push(name_str.to_string());
-                }
+            && let Some(name) = path.file_name()
+        {
+            let name_str = name.to_string_lossy();
+            if !name_str.starts_with('.') {
+                packages.push(name_str.to_string());
             }
+        }
     }
 
     packages.sort();
@@ -133,12 +135,16 @@ mod tests {
         let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
 
         assert_eq!(mappings.len(), 2);
-        assert!(mappings
-            .iter()
-            .any(|m| m.source.ends_with(".bashrc") && m.target.ends_with(".bashrc")));
-        assert!(mappings
-            .iter()
-            .any(|m| m.source.ends_with(".vimrc") && m.target.ends_with(".vimrc")));
+        assert!(
+            mappings
+                .iter()
+                .any(|m| m.source.ends_with(".bashrc") && m.target.ends_with(".bashrc"))
+        );
+        assert!(
+            mappings
+                .iter()
+                .any(|m| m.source.ends_with(".vimrc") && m.target.ends_with(".vimrc"))
+        );
     }
 
     #[test]
