@@ -125,7 +125,11 @@ fn main() {
 
     if let Err(e) = run(cli) {
         eprintln!("Error: {}", e);
-        process::exit(1);
+
+        // Use appropriate exit code based on error type
+        let exit_code = e.exit_code();
+
+        process::exit(exit_code);
     }
 }
 
@@ -170,16 +174,15 @@ fn run(cli: Cli) -> Result<()> {
             target,
             run_setup,
         } => {
-            // Uninstall first (without teardown by default)
-            uninstall_package(
-                &config,
-                &package,
-                target.clone(),
-                true,
-                false,
-                cli.dry_run,
-                cli.verbose,
-            )?;
+            // Uninstall first (without teardown, without copying files back)
+            let opts = UninstallOptions {
+                no_teardown: true,
+                force: false,
+                copy_files_back: false, // Don't copy for restow!
+                dry_run: cli.dry_run,
+                verbose: cli.verbose,
+            };
+            uninstall_package_internal(&config, &package, target.clone(), opts)?;
 
             // Then install (with setup if requested)
             install_package(
@@ -256,7 +259,7 @@ fn install_package(
 
     if !dry_run {
         println!(
-            "Successfully installed {} ({}  symlinks created)",
+            "Successfully installed {} ({} symlinks created)",
             package,
             mappings.len()
         );
@@ -285,19 +288,43 @@ fn install_package(
     Ok(())
 }
 
+struct UninstallOptions {
+    no_teardown: bool,
+    force: bool,
+    copy_files_back: bool,
+    dry_run: bool,
+    verbose: bool,
+}
+
 fn uninstall_package(
     config: &Config,
     package: &str,
     target: Option<PathBuf>,
     no_teardown: bool,
-    _force: bool,
+    force: bool,
     dry_run: bool,
     verbose: bool,
+) -> Result<()> {
+    let opts = UninstallOptions {
+        no_teardown,
+        force,
+        copy_files_back: true,
+        dry_run,
+        verbose,
+    };
+    uninstall_package_internal(config, package, target, opts)
+}
+
+fn uninstall_package_internal(
+    config: &Config,
+    package: &str,
+    target: Option<PathBuf>,
+    opts: UninstallOptions,
 ) -> Result<()> {
     let target_dir = config.get_target(target);
     let package_dir = config.get_package_dir(package);
 
-    if verbose {
+    if opts.verbose {
         println!("Package directory: {}", package_dir.display());
         println!("Target directory: {}", target_dir.display());
     }
@@ -308,8 +335,10 @@ fn uninstall_package(
     }
 
     // Run teardown script first if it exists and not skipped
-    if !no_teardown && let Some(teardown_script) = config.get_teardown_script(package) {
-        if verbose {
+    if !opts.no_teardown
+        && let Some(teardown_script) = config.get_teardown_script(package)
+    {
+        if opts.verbose {
             println!("Found teardown script: {}", teardown_script.display());
         }
 
@@ -319,12 +348,12 @@ fn uninstall_package(
             package,
             &config.stau_dir,
             &target_dir,
-            dry_run,
-            verbose,
+            opts.dry_run,
+            opts.verbose,
         ) {
             eprintln!("Warning: Teardown script failed: {}", e);
             eprintln!("Continuing with uninstall...");
-        } else if !dry_run {
+        } else if !opts.dry_run {
             println!("Teardown script completed successfully");
         }
     }
@@ -332,7 +361,7 @@ fn uninstall_package(
     // Discover all files that would be in the package
     let mappings = package::discover_package_files(&package_dir, &target_dir)?;
 
-    if verbose {
+    if opts.verbose {
         println!("Found {} symlinks to remove", mappings.len());
     }
 
@@ -346,21 +375,33 @@ fn uninstall_package(
     // Remove symlinks and copy files back
     for mapping in &mappings {
         // Remove the symlink if it points to our source
-        let was_removed = symlink::remove_symlink(&mapping.target, &mapping.source, dry_run)?;
+        let was_removed = symlink::remove_symlink(&mapping.target, &mapping.source, opts.dry_run)?;
 
         if was_removed {
-            if verbose || dry_run {
+            if opts.verbose || opts.dry_run {
                 println!("  Removing symlink: {}", mapping.target.display());
             }
 
-            // Copy the source file to target location
-            if verbose || dry_run {
-                println!("  Copying file: {}", mapping.target.display());
-            }
+            // Copy the source file to target location (unless we're doing a restow)
+            if opts.copy_files_back {
+                if opts.verbose || opts.dry_run {
+                    println!("  Copying file: {}", mapping.target.display());
+                }
 
-            symlink::copy_file(&mapping.source, &mapping.target, dry_run)?;
+                // Check if target already exists (conflict)
+                if mapping.target.exists() && !opts.force {
+                    return Err(error::StauError::ConflictingFile(mapping.target.clone()));
+                }
+
+                // If force is enabled and file exists, remove it first
+                if opts.force && mapping.target.exists() && !opts.dry_run {
+                    std::fs::remove_file(&mapping.target).map_err(error::StauError::Io)?;
+                }
+
+                symlink::copy_file(&mapping.source, &mapping.target, opts.dry_run)?;
+            }
             removed_count += 1;
-        } else if verbose {
+        } else if opts.verbose {
             println!(
                 "  Skipping {} (not a stau-managed symlink)",
                 mapping.target.display()
@@ -368,11 +409,18 @@ fn uninstall_package(
         }
     }
 
-    if !dry_run {
-        println!(
-            "Successfully uninstalled {} ({} symlinks removed, files copied back)",
-            package, removed_count
-        );
+    if !opts.dry_run {
+        if opts.copy_files_back {
+            println!(
+                "Successfully uninstalled {} ({} symlinks removed, files copied back)",
+                package, removed_count
+            );
+        } else {
+            println!(
+                "Successfully removed {} symlinks for {}",
+                removed_count, package
+            );
+        }
     }
 
     Ok(())
