@@ -52,13 +52,65 @@ pub fn is_broken_symlink(path: &Path) -> bool {
 
 /// Create a symlink, ensuring parent directories exist
 pub fn create_symlink(source: &Path, target: &Path, dry_run: bool) -> Result<()> {
+    create_symlink_with_force(source, target, dry_run, false)
+}
+
+/// Create a symlink with optional force flag to overwrite existing files
+pub fn create_symlink_with_force(
+    source: &Path,
+    target: &Path,
+    dry_run: bool,
+    force: bool,
+) -> Result<()> {
     // Check if target already exists
     if target.exists() || target.symlink_metadata().is_ok() {
         // Check if it's already the correct symlink
         if is_stau_symlink(target, source)? {
             return Ok(()); // Already correct, nothing to do
         }
-        return Err(StauError::ConflictingFile(target.to_path_buf()));
+
+        if !force {
+            return Err(StauError::ConflictingFile(target.to_path_buf()));
+        }
+
+        // Force enabled: remove the existing file/symlink
+        if !dry_run {
+            let metadata = target.symlink_metadata()?;
+            if metadata.is_symlink() {
+                fs::remove_file(target).map_err(|e| {
+                    if e.kind() == std::io::ErrorKind::PermissionDenied {
+                        StauError::PermissionDenied(format!(
+                            "Cannot remove existing symlink: {}",
+                            target.display()
+                        ))
+                    } else {
+                        StauError::Io(e)
+                    }
+                })?;
+            } else if metadata.is_file() {
+                fs::remove_file(target).map_err(|e| {
+                    if e.kind() == std::io::ErrorKind::PermissionDenied {
+                        StauError::PermissionDenied(format!(
+                            "Cannot remove existing file: {}",
+                            target.display()
+                        ))
+                    } else {
+                        StauError::Io(e)
+                    }
+                })?;
+            } else if metadata.is_dir() {
+                fs::remove_dir_all(target).map_err(|e| {
+                    if e.kind() == std::io::ErrorKind::PermissionDenied {
+                        StauError::PermissionDenied(format!(
+                            "Cannot remove existing directory: {}",
+                            target.display()
+                        ))
+                    } else {
+                        StauError::Io(e)
+                    }
+                })?;
+            }
+        }
     }
 
     if dry_run {
@@ -227,5 +279,88 @@ mod tests {
 
         // Verify it's detected as broken
         assert!(is_broken_symlink(&target));
+    }
+
+    #[test]
+    fn test_force_overwrite_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let target = temp_dir.path().join("target.txt");
+
+        // Create source and target files
+        File::create(&source).unwrap();
+        fs::write(&target, "existing content").unwrap();
+
+        // Without force, should fail
+        let result = create_symlink_with_force(&source, &target, false, false);
+        assert!(result.is_err());
+
+        // With force, should succeed
+        create_symlink_with_force(&source, &target, false, true).unwrap();
+
+        // Verify the symlink was created
+        assert!(is_stau_symlink(&target, &source).unwrap());
+    }
+
+    #[test]
+    fn test_force_overwrite_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let target = temp_dir.path().join("target_dir");
+
+        // Create source file and target directory with a file inside
+        File::create(&source).unwrap();
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("file.txt"), "content").unwrap();
+
+        // Without force, should fail
+        let result = create_symlink_with_force(&source, &target, false, false);
+        assert!(result.is_err());
+
+        // With force, should succeed and remove the entire directory
+        create_symlink_with_force(&source, &target, false, true).unwrap();
+
+        // Verify the symlink was created
+        assert!(is_stau_symlink(&target, &source).unwrap());
+    }
+
+    #[test]
+    fn test_force_overwrite_symlink() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let old_source = temp_dir.path().join("old_source.txt");
+        let target = temp_dir.path().join("target.txt");
+
+        // Create source files
+        File::create(&source).unwrap();
+        File::create(&old_source).unwrap();
+
+        // Create symlink pointing to old source
+        unix_fs::symlink(&old_source, &target).unwrap();
+
+        // With force, should replace the symlink
+        create_symlink_with_force(&source, &target, false, true).unwrap();
+
+        // Verify the symlink now points to the new source
+        assert!(is_stau_symlink(&target, &source).unwrap());
+        assert!(!is_stau_symlink(&target, &old_source).unwrap());
+    }
+
+    #[test]
+    fn test_force_respects_dry_run() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let target = temp_dir.path().join("target.txt");
+
+        // Create source and target files
+        File::create(&source).unwrap();
+        fs::write(&target, "existing content").unwrap();
+
+        // With force and dry_run, should succeed but not modify anything
+        create_symlink_with_force(&source, &target, true, true).unwrap();
+
+        // Verify the file still exists and wasn't replaced
+        assert!(!target.symlink_metadata().unwrap().is_symlink());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "existing content");
     }
 }
