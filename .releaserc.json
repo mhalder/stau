@@ -55,7 +55,7 @@
     [
       "@semantic-release/exec",
       {
-        "publishCmd": "cargo publish --token ${CARGO_REGISTRY_TOKEN}"
+        "publishCmd": "cargo publish --token $CARGO_REGISTRY_TOKEN"
       }
     ],
     [
