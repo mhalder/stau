@@ -85,13 +85,20 @@ mod tests {
     fn create_script(path: &Path, content: &str) {
         let mut file = File::create(path).unwrap();
         file.write_all(content.as_bytes()).unwrap();
-        file.flush().unwrap();
+        file.sync_all().unwrap(); // Ensure data is written to disk
         drop(file); // Explicitly close file before changing permissions
 
         // Make executable
         let mut perms = fs::metadata(path).unwrap().permissions();
         perms.set_mode(0o755);
         fs::set_permissions(path, perms).unwrap();
+
+        // Sync directory to ensure metadata changes are persisted
+        if let Some(parent) = path.parent() {
+            if let Ok(dir) = fs::File::open(parent) {
+                let _ = dir.sync_all();
+            }
+        }
     }
 
     #[test]
