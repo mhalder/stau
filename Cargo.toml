@@ -5,7 +5,10 @@ edition = "2024"
 license = "MIT"
 authors = ["mhalder"]
 repository = "https://github.com/mhalder/stau"
+homepage = "https://github.com/mhalder/stau"
+documentation = "https://github.com/mhalder/stau#readme"
 description = "A modern dotfile manager with GNU Stow-style symlink management and automated setup scripts"
+readme = "README.md"
 keywords = ["dotfiles", "symlink", "stow", "configuration", "cli"]
 categories = ["command-line-utilities", "config"]
 
