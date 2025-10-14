@@ -1,0 +1,144 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Install semantic-release and plugins
+        run: |
+          npm install -g \
+            semantic-release@latest \
+            @semantic-release/changelog@latest \
+            @semantic-release/git@latest \
+            @semantic-release/github@latest \
+            @semantic-release/exec@latest \
+            conventional-changelog-conventionalcommits@latest
+
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: npx semantic-release
+
+  build-binaries:
+    name: Build Release Binaries
+    needs: release
+    if: needs.release.outputs.new_release_published == 'true'
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: stau-linux-x86_64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: stau-macos-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: stau-macos-aarch64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: stau-windows-x86_64.exe
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.release.outputs.new_release_version }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary (Linux and macOS)
+        if: matrix.os != 'windows-latest'
+        run: strip target/${{ matrix.target }}/release/stau
+
+      - name: Prepare binary (Linux and macOS)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ${{ matrix.name }}.tar.gz stau
+          mv ${{ matrix.name }}.tar.gz ../../..
+
+      - name: Prepare binary (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          7z a ../../../${{ matrix.name }}.zip stau.exe
+
+      - name: Upload to GitHub Release (Linux and macOS)
+        if: matrix.os != 'windows-latest'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.release.outputs.new_release_version }}
+          files: ${{ matrix.name }}.tar.gz
+
+      - name: Upload to GitHub Release (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.release.outputs.new_release_version }}
+          files: ${{ matrix.name }}.zip

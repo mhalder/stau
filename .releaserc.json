@@ -1,0 +1,70 @@
+{
+  "branches": ["main"],
+  "plugins": [
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "preset": "conventionalcommits",
+        "releaseRules": [
+          { "type": "feat", "release": "minor" },
+          { "type": "fix", "release": "patch" },
+          { "type": "perf", "release": "patch" },
+          { "type": "docs", "release": false },
+          { "type": "refactor", "release": "patch" },
+          { "type": "style", "release": false },
+          { "type": "test", "release": false },
+          { "type": "chore", "release": false },
+          { "type": "ci", "release": false },
+          { "type": "build", "release": false },
+          { "breaking": true, "release": "major" }
+        ]
+      }
+    ],
+    [
+      "@semantic-release/release-notes-generator",
+      {
+        "preset": "conventionalcommits",
+        "presetConfig": {
+          "types": [
+            { "type": "feat", "section": "Features" },
+            { "type": "fix", "section": "Bug Fixes" },
+            { "type": "perf", "section": "Performance Improvements" },
+            { "type": "docs", "section": "Documentation" },
+            { "type": "refactor", "section": "Code Refactoring" },
+            { "type": "style", "section": "Styles", "hidden": true },
+            { "type": "test", "section": "Tests", "hidden": true },
+            { "type": "chore", "section": "Chores", "hidden": true },
+            { "type": "ci", "section": "CI/CD", "hidden": true },
+            { "type": "build", "section": "Build System", "hidden": true }
+          ]
+        }
+      }
+    ],
+    [
+      "@semantic-release/changelog",
+      {
+        "changelogFile": "CHANGELOG.md"
+      }
+    ],
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "sed -i 's/^version = \".*\"/version = \"${nextRelease.version}\"/' Cargo.toml && cargo build --release"
+      }
+    ],
+    [
+      "@semantic-release/exec",
+      {
+        "publishCmd": "cargo publish --token ${CARGO_REGISTRY_TOKEN}"
+      }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": ["Cargo.toml", "Cargo.lock", "CHANGELOG.md"],
+        "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      }
+    ],
+    "@semantic-release/github"
+  ]
+}
