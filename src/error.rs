@@ -27,9 +27,6 @@ pub enum StauError {
     #[error("Invalid path: {0}\nHint: The specified path is invalid or inaccessible.")]
     InvalidPath(PathBuf),
 
-    #[error("Broken symlink: {0}\nHint: Use 'stau clean <package>' to remove broken symlinks.")]
-    BrokenSymlink(PathBuf),
-
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
 
@@ -47,7 +44,6 @@ impl StauError {
             StauError::TeardownScriptFailed { .. } => 4,
             StauError::StauDirNotFound(_) => 1,
             StauError::InvalidPath(_) => 1,
-            StauError::BrokenSymlink(_) => 1,
             StauError::Io(_) => 3,
             StauError::Other(_) => 1,
         }
