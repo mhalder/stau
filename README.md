@@ -157,6 +157,16 @@ cargo build --release
 
 [MIT](LICENSE)
 
+## Versioning
+
+This project follows [Semantic Versioning](https://semver.org/):
+
+- **MAJOR** version for incompatible API changes
+- **MINOR** version for backwards-compatible functionality additions
+- **PATCH** version for backwards-compatible bug fixes
+
+See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
+
 ## Contributing
 
 Contributions welcome! Please open an issue or pull request.
