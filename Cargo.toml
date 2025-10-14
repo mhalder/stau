@@ -10,3 +10,6 @@ keywords = ["dotfiles", "symlink", "stow", "configuration", "cli"]
 categories = ["command-line-utilities", "config"]
 
 [dependencies]
+clap = { version = "4.5", features = ["derive", "env"] }
+anyhow = "1.0"
+thiserror = "1.0"
