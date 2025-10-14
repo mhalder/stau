@@ -1,0 +1,12 @@
+[package]
+name = "stau"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["mhalder"]
+repository = "https://github.com/mhalder/stau"
+description = "A modern dotfile manager with GNU Stow-style symlink management and automated setup scripts"
+keywords = ["dotfiles", "symlink", "stow", "configuration", "cli"]
+categories = ["command-line-utilities", "config"]
+
+[dependencies]
