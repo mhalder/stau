@@ -1,3 +1,20 @@
+## 1.0.0 (2025-10-14)
+
+### Features
+
+* add exit codes, --force flag, integration tests, and enhanced error messages ([a8ac14f](https://github.com/mhalder/stau/commit/a8ac14fc3ee53777bc2aed1a77a1b1304d577cb2))
+* implement core install and uninstall commands ([803dd8a](https://github.com/mhalder/stau/commit/803dd8a420dce7931ab3dc1f57988e585d34f33e))
+* implement foundational CLI structure and configuration ([e0c173a](https://github.com/mhalder/stau/commit/e0c173a228b1c9eaf18ae8c7c0741d0dbf44b435))
+* implement remaining commands (list, restow, adopt, status, clean) ([0662aee](https://github.com/mhalder/stau/commit/0662aee797c6207601d9a49e3eaab4e32e0d48ab))
+
+### Bug Fixes
+
+* correct cargo registry token env var syntax in release config ([ad62488](https://github.com/mhalder/stau/commit/ad62488a7829ec288e47c736402b8df79d289afd))
+
+### Documentation
+
+* add semantic versioning and changelog ([2a501c4](https://github.com/mhalder/stau/commit/2a501c467b997afc1634d11e1b68ceb9deff175e))
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
