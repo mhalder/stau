@@ -356,3 +356,130 @@ fn test_package_not_found_error() {
     assert!(!output.status.success());
     assert_eq!(output.status.code().unwrap(), 1, "Should exit with code 1");
 }
+
+#[test]
+fn test_force_flag_overwrites_file() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    // Create conflicting file
+    fs::write(target_dir.join(".vimrc"), "existing content").unwrap();
+
+    // Install without force - should fail
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "Should fail without --force");
+
+    // Install with force - should succeed
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim", "--force"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Should succeed with --force: stderr={:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(target_dir.join(".vimrc").is_symlink());
+}
+
+#[test]
+fn test_force_flag_overwrites_directory() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Create a package where the package directory itself will conflict
+    let package_dir = stau_dir.join("config");
+    fs::create_dir(&package_dir).unwrap();
+    fs::write(package_dir.join(".config"), "config file").unwrap();
+
+    // Create a conflicting directory at the exact target path
+    let conflict_dir = target_dir.join(".config");
+    fs::create_dir(&conflict_dir).unwrap();
+    fs::write(conflict_dir.join("old_file.txt"), "old content").unwrap();
+
+    // Install without force - should fail
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "config"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "Should fail without --force");
+
+    // Install with force - should succeed and remove directory
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "config", "--force"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Should succeed with --force: stderr={:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(target_dir.join(".config").is_symlink());
+    assert!(!conflict_dir.join("old_file.txt").exists());
+}
+
+#[test]
+fn test_uninstall_force_flag() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    // Install
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim"])
+        .output()
+        .unwrap();
+
+    // Verify symlink was created
+    assert!(target_dir.join(".vimrc").is_symlink());
+
+    // Test that uninstall with --force flag is accepted and works
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["uninstall", "vim", "--force"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Uninstall with --force should succeed: stderr={:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The file should exist (copied back) and not be a symlink
+    assert!(target_dir.join(".vimrc").exists());
+    assert!(!target_dir.join(".vimrc").is_symlink());
+}

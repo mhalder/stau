@@ -44,6 +44,10 @@ enum Commands {
         /// Skip running setup script
         #[arg(long)]
         no_setup: bool,
+
+        /// Force install even if conflicts exist
+        #[arg(short, long)]
+        force: bool,
     },
 
     /// Uninstall a package by removing symlinks and copying files back
@@ -145,11 +149,13 @@ fn run(cli: Cli) -> Result<()> {
             package,
             target,
             no_setup,
+            force,
         } => install_package(
             &config,
             &package,
             target,
             no_setup,
+            force,
             cli.dry_run,
             cli.verbose,
         ),
@@ -190,6 +196,7 @@ fn run(cli: Cli) -> Result<()> {
                 &package,
                 target,
                 !run_setup,
+                false, // Don't force during restow
                 cli.dry_run,
                 cli.verbose,
             )
@@ -216,6 +223,7 @@ fn install_package(
     package: &str,
     target: Option<PathBuf>,
     no_setup: bool,
+    force: bool,
     dry_run: bool,
     verbose: bool,
 ) -> Result<()> {
@@ -254,7 +262,7 @@ fn install_package(
             );
         }
 
-        symlink::create_symlink(&mapping.source, &mapping.target, dry_run)?;
+        symlink::create_symlink_with_force(&mapping.source, &mapping.target, dry_run, force)?;
     }
 
     if !dry_run {
@@ -395,7 +403,15 @@ fn uninstall_package_internal(
 
                 // If force is enabled and file exists, remove it first
                 if opts.force && mapping.target.exists() && !opts.dry_run {
-                    std::fs::remove_file(&mapping.target).map_err(error::StauError::Io)?;
+                    let metadata = mapping
+                        .target
+                        .symlink_metadata()
+                        .map_err(error::StauError::Io)?;
+                    if metadata.is_dir() {
+                        std::fs::remove_dir_all(&mapping.target).map_err(error::StauError::Io)?;
+                    } else {
+                        std::fs::remove_file(&mapping.target).map_err(error::StauError::Io)?;
+                    }
                 }
 
                 symlink::copy_file(&mapping.source, &mapping.target, opts.dry_run)?;
