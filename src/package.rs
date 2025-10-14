@@ -50,14 +50,13 @@ fn walk_directory(
 
         // Skip version control files/directories in root of package
         let file_name_str = file_name.to_string_lossy();
-        if current_dir == base_dir {
-            if matches!(
+        if current_dir == base_dir
+            && matches!(
                 file_name_str.as_ref(),
                 ".git" | ".gitignore" | ".gitattributes" | ".gitmodules"
             ) {
                 continue;
             }
-        }
 
         let metadata = entry.metadata().map_err(StauError::Io)?;
 
@@ -101,14 +100,13 @@ pub fn list_packages(stau_dir: &Path) -> Result<Vec<String>> {
         let path = entry.path();
 
         // Only include directories, skip hidden directories
-        if path.is_dir() {
-            if let Some(name) = path.file_name() {
+        if path.is_dir()
+            && let Some(name) = path.file_name() {
                 let name_str = name.to_string_lossy();
                 if !name_str.starts_with('.') {
                     packages.push(name_str.to_string());
                 }
             }
-        }
     }
 
     packages.sort();

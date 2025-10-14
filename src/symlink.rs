@@ -20,7 +20,7 @@ impl SymlinkMapping {
 
 /// Check if a path is a symlink pointing to the expected target
 pub fn is_stau_symlink(path: &Path, expected_target: &Path) -> Result<bool> {
-    if !path.exists() && !path.symlink_metadata().is_ok() {
+    if !path.exists() && path.symlink_metadata().is_err() {
         return Ok(false);
     }
 
@@ -41,12 +41,11 @@ pub fn is_stau_symlink(path: &Path, expected_target: &Path) -> Result<bool> {
 
 /// Check if a symlink is broken (points to non-existent file)
 pub fn is_broken_symlink(path: &Path) -> bool {
-    if let Ok(metadata) = path.symlink_metadata() {
-        if metadata.is_symlink() {
+    if let Ok(metadata) = path.symlink_metadata()
+        && metadata.is_symlink() {
             // Check if the target exists
             return !path.exists();
         }
-    }
     false
 }
 

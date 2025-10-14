@@ -272,24 +272,22 @@ fn install_package(
     }
 
     // Run setup script if it exists and not skipped
-    if !no_setup {
-        if let Some(setup_script) = config.get_setup_script(package) {
-            if verbose {
-                println!("Found setup script: {}", setup_script.display());
-            }
+    if !no_setup && let Some(setup_script) = config.get_setup_script(package) {
+        if verbose {
+            println!("Found setup script: {}", setup_script.display());
+        }
 
-            script::execute_script(
-                &setup_script,
-                package,
-                &config.stau_dir,
-                &target_dir,
-                dry_run,
-                verbose,
-            )?;
+        script::execute_script(
+            &setup_script,
+            package,
+            &config.stau_dir,
+            &target_dir,
+            dry_run,
+            verbose,
+        )?;
 
-            if !dry_run {
-                println!("Setup script completed successfully");
-            }
+        if !dry_run {
+            println!("Setup script completed successfully");
         }
     }
 
@@ -319,26 +317,24 @@ fn uninstall_package(
     }
 
     // Run teardown script first if it exists and not skipped
-    if !no_teardown {
-        if let Some(teardown_script) = config.get_teardown_script(package) {
-            if verbose {
-                println!("Found teardown script: {}", teardown_script.display());
-            }
+    if !no_teardown && let Some(teardown_script) = config.get_teardown_script(package) {
+        if verbose {
+            println!("Found teardown script: {}", teardown_script.display());
+        }
 
-            // Note: PRD says teardown should continue even if it fails
-            if let Err(e) = script::execute_script(
-                &teardown_script,
-                package,
-                &config.stau_dir,
-                &target_dir,
-                dry_run,
-                verbose,
-            ) {
-                eprintln!("Warning: Teardown script failed: {}", e);
-                eprintln!("Continuing with uninstall...");
-            } else if !dry_run {
-                println!("Teardown script completed successfully");
-            }
+        // Note: PRD says teardown should continue even if it fails
+        if let Err(e) = script::execute_script(
+            &teardown_script,
+            package,
+            &config.stau_dir,
+            &target_dir,
+            dry_run,
+            verbose,
+        ) {
+            eprintln!("Warning: Teardown script failed: {}", e);
+            eprintln!("Continuing with uninstall...");
+        } else if !dry_run {
+            println!("Teardown script completed successfully");
         }
     }
 
