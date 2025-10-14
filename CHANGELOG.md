@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/mhalder/stau/compare/v1.0.0...v1.0.1) (2025-10-14)
+
+### Bug Fixes
+
+* correct symlink metadata handling in --force flag implementation ([2fd0a70](https://github.com/mhalder/stau/commit/2fd0a70a84294b39c8e63c5d8c9a88a64746287e))
+
 ## 1.0.0 (2025-10-14)
 
 ### Features
