@@ -4,6 +4,9 @@ use std::process;
 
 mod config;
 mod error;
+mod package;
+mod script;
+mod symlink;
 
 use config::Config;
 use error::Result;
@@ -138,37 +141,29 @@ fn run(cli: Cli) -> Result<()> {
             package,
             target,
             no_setup,
-        } => {
-            println!("Installing package: {}", package);
-            if cli.dry_run {
-                println!("(dry run - no changes made)");
-            }
-            if no_setup {
-                println!("Skipping setup script");
-            }
-            // TODO: Implement install logic
-            Ok(())
-        }
+        } => install_package(
+            &config,
+            &package,
+            target,
+            no_setup,
+            cli.dry_run,
+            cli.verbose,
+        ),
 
         Commands::Uninstall {
             package,
             target,
             no_teardown,
             force,
-        } => {
-            println!("Uninstalling package: {}", package);
-            if cli.dry_run {
-                println!("(dry run - no changes made)");
-            }
-            if no_teardown {
-                println!("Skipping teardown script");
-            }
-            if force {
-                println!("Force uninstall enabled");
-            }
-            // TODO: Implement uninstall logic
-            Ok(())
-        }
+        } => uninstall_package(
+            &config,
+            &package,
+            target,
+            no_teardown,
+            force,
+            cli.dry_run,
+            cli.verbose,
+        ),
 
         Commands::Restow {
             package,
@@ -220,4 +215,178 @@ fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn install_package(
+    config: &Config,
+    package: &str,
+    target: Option<PathBuf>,
+    no_setup: bool,
+    dry_run: bool,
+    verbose: bool,
+) -> Result<()> {
+    let target_dir = config.get_target(target);
+    let package_dir = config.get_package_dir(package);
+
+    if verbose {
+        println!("Package directory: {}", package_dir.display());
+        println!("Target directory: {}", target_dir.display());
+    }
+
+    // Check if package exists
+    if !config.package_exists(package) {
+        return Err(error::StauError::PackageNotFound(package.to_string()));
+    }
+
+    // Discover all files in the package
+    let mappings = package::discover_package_files(&package_dir, &target_dir)?;
+
+    if verbose {
+        println!("Found {} files to link", mappings.len());
+    }
+
+    if mappings.is_empty() {
+        println!("No files to link in package '{}'", package);
+        return Ok(());
+    }
+
+    // Create symlinks for all files
+    for mapping in &mappings {
+        if verbose || dry_run {
+            println!(
+                "  {} -> {}",
+                mapping.target.display(),
+                mapping.source.display()
+            );
+        }
+
+        symlink::create_symlink(&mapping.source, &mapping.target, dry_run)?;
+    }
+
+    if !dry_run {
+        println!(
+            "Successfully installed {} ({}  symlinks created)",
+            package,
+            mappings.len()
+        );
+    }
+
+    // Run setup script if it exists and not skipped
+    if !no_setup {
+        if let Some(setup_script) = config.get_setup_script(package) {
+            if verbose {
+                println!("Found setup script: {}", setup_script.display());
+            }
+
+            script::execute_script(
+                &setup_script,
+                package,
+                &config.stau_dir,
+                &target_dir,
+                dry_run,
+                verbose,
+            )?;
+
+            if !dry_run {
+                println!("Setup script completed successfully");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn uninstall_package(
+    config: &Config,
+    package: &str,
+    target: Option<PathBuf>,
+    no_teardown: bool,
+    _force: bool,
+    dry_run: bool,
+    verbose: bool,
+) -> Result<()> {
+    let target_dir = config.get_target(target);
+    let package_dir = config.get_package_dir(package);
+
+    if verbose {
+        println!("Package directory: {}", package_dir.display());
+        println!("Target directory: {}", target_dir.display());
+    }
+
+    // Check if package exists
+    if !config.package_exists(package) {
+        return Err(error::StauError::PackageNotFound(package.to_string()));
+    }
+
+    // Run teardown script first if it exists and not skipped
+    if !no_teardown {
+        if let Some(teardown_script) = config.get_teardown_script(package) {
+            if verbose {
+                println!("Found teardown script: {}", teardown_script.display());
+            }
+
+            // Note: PRD says teardown should continue even if it fails
+            if let Err(e) = script::execute_script(
+                &teardown_script,
+                package,
+                &config.stau_dir,
+                &target_dir,
+                dry_run,
+                verbose,
+            ) {
+                eprintln!("Warning: Teardown script failed: {}", e);
+                eprintln!("Continuing with uninstall...");
+            } else if !dry_run {
+                println!("Teardown script completed successfully");
+            }
+        }
+    }
+
+    // Discover all files that would be in the package
+    let mappings = package::discover_package_files(&package_dir, &target_dir)?;
+
+    if verbose {
+        println!("Found {} symlinks to remove", mappings.len());
+    }
+
+    if mappings.is_empty() {
+        println!("No symlinks to remove for package '{}'", package);
+        return Ok(());
+    }
+
+    let mut removed_count = 0;
+
+    // Remove symlinks and copy files back
+    for mapping in &mappings {
+        // Remove the symlink if it points to our source
+        let was_removed = symlink::remove_symlink(&mapping.target, &mapping.source, dry_run)?;
+
+        if was_removed {
+            if verbose || dry_run {
+                println!("  Removing symlink: {}", mapping.target.display());
+            }
+
+            // Copy the source file to target location
+            if verbose || dry_run {
+                println!("  Copying file: {}", mapping.target.display());
+            }
+
+            symlink::copy_file(&mapping.source, &mapping.target, dry_run)?;
+            removed_count += 1;
+        } else if verbose {
+            println!(
+                "  Skipping {} (not a stau-managed symlink)",
+                mapping.target.display()
+            );
+        }
+    }
+
+    if !dry_run {
+        println!(
+            "Successfully uninstalled {} ({} symlinks removed, files copied back)",
+            package, removed_count
+        );
+    }
+
+    Ok(())
 }
