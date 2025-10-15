@@ -1128,3 +1128,418 @@ fn test_install_with_setup_script_failure() {
     assert!(!output.status.success());
     assert_eq!(output.status.code().unwrap(), 4); // SetupScriptFailed error
 }
+
+// Tests for --target CLI option
+#[test]
+fn test_install_with_target_flag() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    // Install using --target flag instead of env var
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .args(["install", "vim", "--target", target_dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Install with --target failed");
+    assert!(target_dir.join(".vimrc").is_symlink());
+}
+
+#[test]
+fn test_uninstall_with_target_flag() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    // Install first
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim"])
+        .output()
+        .unwrap();
+
+    // Uninstall using --target flag
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .args(["uninstall", "vim", "--target", target_dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Uninstall with --target failed");
+    assert!(!target_dir.join(".vimrc").is_symlink());
+}
+
+#[test]
+fn test_restow_with_target_flag() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    // Install first
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim"])
+        .output()
+        .unwrap();
+
+    // Restow using --target flag
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .args(["restow", "vim", "--target", target_dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Restow with --target failed");
+    assert!(target_dir.join(".vimrc").is_symlink());
+}
+
+#[test]
+fn test_adopt_with_target_flag() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let config_file = target_dir.join(".bashrc");
+    fs::write(&config_file, "echo 'hello'").unwrap();
+
+    // Adopt using --target flag
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .args([
+            "adopt",
+            "bash",
+            config_file.to_str().unwrap(),
+            "--target",
+            target_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Adopt with --target failed");
+    assert!(config_file.is_symlink());
+}
+
+#[test]
+fn test_list_with_target_flag() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    // Install first
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim"])
+        .output()
+        .unwrap();
+
+    // List using --target flag
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .args(["list", "--target", target_dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "List with --target failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("vim"));
+    assert!(stdout.contains("[installed]"));
+}
+
+#[test]
+fn test_status_with_target_flag() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    // Status using --target flag
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .args(["status", "vim", "--target", target_dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Status with --target failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Status for package"));
+}
+
+#[test]
+fn test_clean_with_target_flag() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    // Install first
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim"])
+        .output()
+        .unwrap();
+
+    // Clean using --target flag
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .args(["clean", "vim", "--target", target_dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Clean with --target failed");
+}
+
+// Tests for --verbose with other commands
+#[test]
+fn test_uninstall_verbose() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    // Install first
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim"])
+        .output()
+        .unwrap();
+
+    // Uninstall with --verbose
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["uninstall", "vim", "--verbose"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Package directory:") || stdout.contains("Removing symlink:"));
+}
+
+#[test]
+fn test_restow_verbose() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    // Install first
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim"])
+        .output()
+        .unwrap();
+
+    // Restow with --verbose
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["restow", "vim", "--verbose"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Package directory:") || stdout.contains("Target directory:"));
+}
+
+#[test]
+fn test_adopt_verbose() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let config_file = target_dir.join(".bashrc");
+    fs::write(&config_file, "echo 'hello'").unwrap();
+
+    // Adopt with --verbose
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["adopt", "bash", config_file.to_str().unwrap(), "--verbose"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Verbose should show the file paths
+    assert!(stdout.contains(".bashrc") || stdout.contains("bash"));
+}
+
+#[test]
+fn test_clean_verbose() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    // Install first
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim"])
+        .output()
+        .unwrap();
+
+    // Clean with --verbose
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["clean", "vim", "--verbose"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    // With verbose, should output something even if no broken symlinks
+    assert!(!output.stdout.is_empty() || !output.stderr.is_empty());
+}
+
+// Tests for --dry-run with other commands
+#[test]
+fn test_uninstall_dry_run() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    // Install first
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim"])
+        .output()
+        .unwrap();
+
+    // Uninstall with --dry-run
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["uninstall", "vim", "--dry-run"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Uninstall dry-run failed: stderr={:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Symlink should still exist (dry run doesn't actually uninstall)
+    assert!(target_dir.join(".vimrc").is_symlink());
+}
+
+#[test]
+fn test_restow_dry_run() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    // Install first
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim"])
+        .output()
+        .unwrap();
+
+    // Restow with --dry-run
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["restow", "vim", "--dry-run"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    // Symlink should still exist
+    assert!(target_dir.join(".vimrc").is_symlink());
+}
+
+#[test]
+fn test_adopt_dry_run() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let config_file = target_dir.join(".bashrc");
+    fs::write(&config_file, "echo 'hello'").unwrap();
+
+    // Adopt with --dry-run
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["adopt", "bash", config_file.to_str().unwrap(), "--dry-run"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    // File should not be a symlink (dry run doesn't actually adopt)
+    assert!(!config_file.is_symlink());
+    // Package directory should not be created
+    assert!(!stau_dir.join("bash").exists());
+}

@@ -396,21 +396,26 @@ fn uninstall_package_internal(
                     println!("  Copying file: {}", mapping.target.display());
                 }
 
-                // Check if target already exists (conflict)
-                if mapping.target.exists() && !opts.force {
-                    return Err(error::StauError::ConflictingFile(mapping.target.clone()));
-                }
+                // In dry-run mode, skip the conflict check and removal since the symlink
+                // wasn't actually removed yet
+                if !opts.dry_run {
+                    // Check if target already exists (conflict)
+                    if mapping.target.exists() && !opts.force {
+                        return Err(error::StauError::ConflictingFile(mapping.target.clone()));
+                    }
 
-                // If force is enabled and file exists, remove it first
-                if opts.force && mapping.target.exists() && !opts.dry_run {
-                    let metadata = mapping
-                        .target
-                        .symlink_metadata()
-                        .map_err(error::StauError::Io)?;
-                    if metadata.is_dir() {
-                        std::fs::remove_dir_all(&mapping.target).map_err(error::StauError::Io)?;
-                    } else {
-                        std::fs::remove_file(&mapping.target).map_err(error::StauError::Io)?;
+                    // If force is enabled and file exists, remove it first
+                    if opts.force && mapping.target.exists() {
+                        let metadata = mapping
+                            .target
+                            .symlink_metadata()
+                            .map_err(error::StauError::Io)?;
+                        if metadata.is_dir() {
+                            std::fs::remove_dir_all(&mapping.target)
+                                .map_err(error::StauError::Io)?;
+                        } else {
+                            std::fs::remove_file(&mapping.target).map_err(error::StauError::Io)?;
+                        }
                     }
                 }
 

@@ -166,12 +166,12 @@ pub fn remove_symlink(path: &Path, expected_source: &Path, dry_run: bool) -> Res
 
 /// Copy a file from source to destination
 pub fn copy_file(source: &Path, dest: &Path, dry_run: bool) -> Result<()> {
-    if dest.exists() {
-        return Err(StauError::ConflictingFile(dest.to_path_buf()));
-    }
-
     if dry_run {
         return Ok(());
+    }
+
+    if dest.exists() {
+        return Err(StauError::ConflictingFile(dest.to_path_buf()));
     }
 
     // Create parent directories if they don't exist
