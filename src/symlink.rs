@@ -363,4 +363,138 @@ mod tests {
         assert!(!target.symlink_metadata().unwrap().is_symlink());
         assert_eq!(fs::read_to_string(&target).unwrap(), "existing content");
     }
+
+    #[test]
+    fn test_copy_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let dest = temp_dir.path().join("dest.txt");
+
+        fs::write(&source, "test content").unwrap();
+
+        copy_file(&source, &dest, false).unwrap();
+
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "test content");
+    }
+
+    #[test]
+    fn test_copy_file_with_nested_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let dest = temp_dir.path().join("nested/dir/dest.txt");
+
+        fs::write(&source, "test content").unwrap();
+
+        copy_file(&source, &dest, false).unwrap();
+
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "test content");
+        assert!(dest.parent().unwrap().exists());
+    }
+
+    #[test]
+    fn test_copy_file_dry_run() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let dest = temp_dir.path().join("dest.txt");
+
+        fs::write(&source, "test content").unwrap();
+
+        copy_file(&source, &dest, true).unwrap();
+
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn test_copy_file_conflict() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let dest = temp_dir.path().join("dest.txt");
+
+        fs::write(&source, "source content").unwrap();
+        fs::write(&dest, "dest content").unwrap();
+
+        let result = copy_file(&source, &dest, false);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), StauError::ConflictingFile(_)));
+    }
+
+    #[test]
+    fn test_remove_symlink_dry_run() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let target = temp_dir.path().join("target.txt");
+
+        File::create(&source).unwrap();
+        create_symlink(&source, &target, false).unwrap();
+
+        let removed = remove_symlink(&target, &source, true).unwrap();
+        assert!(removed);
+        assert!(target.exists()); // Should still exist in dry run
+    }
+
+    #[test]
+    fn test_remove_wrong_symlink() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let other_source = temp_dir.path().join("other.txt");
+        let target = temp_dir.path().join("target.txt");
+
+        File::create(&source).unwrap();
+        File::create(&other_source).unwrap();
+        unix_fs::symlink(&source, &target).unwrap();
+
+        // Try to remove with wrong source
+        let removed = remove_symlink(&target, &other_source, false).unwrap();
+        assert!(!removed);
+        assert!(target.exists()); // Should still exist
+    }
+
+    #[test]
+    fn test_is_broken_symlink_non_symlink() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("file.txt");
+        File::create(&file).unwrap();
+
+        assert!(!is_broken_symlink(&file));
+    }
+
+    #[test]
+    fn test_is_stau_symlink_non_existent() {
+        let temp_dir = TempDir::new().unwrap();
+        let nonexistent = temp_dir.path().join("nonexistent.txt");
+        let source = temp_dir.path().join("source.txt");
+
+        let result = is_stau_symlink(&nonexistent, &source).unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_create_symlink_already_correct() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let target = temp_dir.path().join("target.txt");
+
+        File::create(&source).unwrap();
+        create_symlink(&source, &target, false).unwrap();
+
+        // Creating again with same target should succeed (idempotent)
+        create_symlink(&source, &target, false).unwrap();
+
+        assert!(is_stau_symlink(&target, &source).unwrap());
+    }
+
+    #[test]
+    fn test_symlink_mapping_equality() {
+        let mapping1 =
+            SymlinkMapping::new(PathBuf::from("/source/file"), PathBuf::from("/target/file"));
+        let mapping2 =
+            SymlinkMapping::new(PathBuf::from("/source/file"), PathBuf::from("/target/file"));
+        let mapping3 = SymlinkMapping::new(
+            PathBuf::from("/source/other"),
+            PathBuf::from("/target/other"),
+        );
+
+        assert_eq!(mapping1, mapping2);
+        assert_ne!(mapping1, mapping3);
+    }
 }
