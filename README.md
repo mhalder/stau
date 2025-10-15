@@ -1,5 +1,10 @@
 # stau
 
+[![CI](https://github.com/mhalder/stau/workflows/CI/badge.svg)](https://github.com/mhalder/stau/actions)
+[![codecov](https://codecov.io/gh/mhalder/stau/branch/main/graph/badge.svg)](https://codecov.io/gh/mhalder/stau)
+[![Crates.io](https://img.shields.io/crates/v/stau.svg)](https://crates.io/crates/stau)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A modern dotfile manager written in Rust that combines GNU Stow-style symlink management with powerful setup automation.
 
 ## Why stau?
