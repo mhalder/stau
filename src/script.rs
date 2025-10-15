@@ -94,10 +94,10 @@ mod tests {
         fs::set_permissions(path, perms).unwrap();
 
         // Sync directory to ensure metadata changes are persisted
-        if let Some(parent) = path.parent() {
-            if let Ok(dir) = fs::File::open(parent) {
-                let _ = dir.sync_all();
-            }
+        if let Some(parent) = path.parent()
+            && let Ok(dir) = fs::File::open(parent)
+        {
+            let _ = dir.sync_all();
         }
     }
 
@@ -217,5 +217,49 @@ mod tests {
         assert_eq!(lines[0], stau_dir.to_str().unwrap());
         assert_eq!(lines[1], "test_package");
         assert_eq!(lines[2], target_dir.to_str().unwrap());
+    }
+
+    #[test]
+    fn test_non_executable_script() {
+        let temp_dir = TempDir::new().unwrap();
+        let script_path = temp_dir.path().join("setup.sh");
+        let stau_dir = temp_dir.path().join("stau");
+        let target_dir = temp_dir.path().join("target");
+
+        fs::create_dir(&stau_dir).unwrap();
+        fs::create_dir(&target_dir).unwrap();
+
+        // Create script without execute permissions
+        let mut file = File::create(&script_path).unwrap();
+        file.write_all(b"#!/bin/bash\necho test\n").unwrap();
+        drop(file);
+
+        // Should fail with permission denied
+        let result = execute_script(&script_path, "test", &stau_dir, &target_dir, false, false);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            StauError::PermissionDenied(_)
+        ));
+    }
+
+    #[test]
+    fn test_script_stdout_stderr_handling() {
+        let temp_dir = TempDir::new().unwrap();
+        let script_path = temp_dir.path().join("setup.sh");
+        let stau_dir = temp_dir.path().join("stau");
+        let target_dir = temp_dir.path().join("target");
+
+        fs::create_dir(&stau_dir).unwrap();
+        fs::create_dir(&target_dir).unwrap();
+
+        // Script that writes to both stdout and stderr
+        create_script(
+            &script_path,
+            "#!/bin/bash\necho 'stdout message'\necho 'stderr message' >&2\nexit 0\n",
+        );
+
+        let result = execute_script(&script_path, "test", &stau_dir, &target_dir, false, false);
+        assert!(result.is_ok());
     }
 }

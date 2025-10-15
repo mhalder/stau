@@ -1,0 +1,18 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 95%
+        threshold: 1%
+    patch:
+      default:
+        target: 90%
+
+comment:
+  layout: "reach,diff,flags,tree"
+  behavior: default
+  require_changes: false
+
+ignore:
+  - "tests/"
+  - "benches/"
