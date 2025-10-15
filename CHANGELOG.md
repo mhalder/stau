@@ -1,3 +1,9 @@
+## [1.0.2](https://github.com/mhalder/stau/compare/v1.0.1...v1.0.2) (2025-10-15)
+
+### Bug Fixes
+
+* resolve uninstall --dry-run conflict error and add comprehensive option coverage ([752c268](https://github.com/mhalder/stau/commit/752c268e319b97a2ade0b784174c44efadf07ca8))
+
 ## [1.0.1](https://github.com/mhalder/stau/compare/v1.0.0...v1.0.1) (2025-10-14)
 
 ### Bug Fixes
