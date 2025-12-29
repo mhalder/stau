@@ -48,25 +48,25 @@ Download pre-built binaries for Linux, macOS (Intel/Apple Silicon), and Windows 
 
 ```bash
 # Install a package (creates symlinks + runs setup script)
-stau install zsh
+stau install ghostty
 
 # List all packages and their status
 stau list
 
 # Show detailed status for a specific package
-stau status zsh
+stau status ghostty
 
 # Adopt existing dotfiles into stau management
-stau adopt zsh ~/.zshrc ~/.zshenv
+stau adopt ghostty ~/.config/ghostty/config
 
 # Uninstall a package (removes symlinks, copies files back)
-stau uninstall zsh
+stau uninstall ghostty
 
 # Refresh symlinks for a package
-stau restow zsh
+stau restow ghostty
 
 # Clean up broken symlinks
-stau clean zsh
+stau clean ghostty
 ```
 
 ## Project Structure
@@ -75,15 +75,12 @@ Organize your dotfiles in a directory structure where each subdirectory is a "pa
 
 ```
 ~/dotfiles/                    # Your dotfiles repository (STAU_DIR)
-├── zsh/
-│   ├── .zshrc                 # Symlinked to ~/.zshrc
-│   ├── .zshenv                # Symlinked to ~/.zshenv
-│   ├── setup.sh               # Optional: runs on 'stau install zsh'
-│   └── teardown.sh            # Optional: runs on 'stau uninstall zsh'
-├── nvim/
-│   └── .config/
-│       └── nvim/
-│           └── init.lua       # Symlinked to ~/.config/nvim/init.lua
+├── ghostty/
+│   ├── .config/
+│   │   └── ghostty/
+│   │       └── config         # Symlinked to ~/.config/ghostty/config
+│   ├── setup.sh               # Optional: runs on 'stau install ghostty'
+│   └── teardown.sh            # Optional: runs on 'stau uninstall ghostty'
 ├── git/
 │   └── .gitconfig             # Symlinked to ~/.gitconfig
 └── tmux/
@@ -97,11 +94,11 @@ Organize your dotfiles in a directory structure where each subdirectory is a "pa
 Creates symlinks from your dotfiles package to the target directory and runs the package's `setup.sh` script if present.
 
 ```bash
-stau install zsh                    # Basic install
-stau install zsh --no-setup         # Skip setup script
-stau install zsh --target /tmp/test # Install to custom directory
-stau install zsh --dry-run          # Preview without making changes
-stau install zsh --verbose          # Show detailed output
+stau install ghostty                    # Basic install
+stau install ghostty --no-setup         # Skip setup script
+stau install ghostty --target /tmp/test # Install to custom directory
+stau install ghostty --dry-run          # Preview without making changes
+stau install ghostty --verbose          # Show detailed output
 ```
 
 **Options:**
@@ -117,9 +114,9 @@ stau install zsh --verbose          # Show detailed output
 Runs `teardown.sh` (if present), removes symlinks, and restores original files from the dotfiles repo. This "unadopts" the dotfiles, leaving you with standalone config files.
 
 ```bash
-stau uninstall zsh                  # Basic uninstall
-stau uninstall zsh --no-teardown    # Skip teardown script
-stau uninstall zsh --dry-run        # Preview without making changes
+stau uninstall ghostty                  # Basic uninstall
+stau uninstall ghostty --no-teardown    # Skip teardown script
+stau uninstall ghostty --dry-run        # Preview without making changes
 ```
 
 **Options:**
@@ -137,9 +134,9 @@ stau uninstall zsh --dry-run        # Preview without making changes
 Removes and recreates symlinks for a package. Useful after modifying the package structure or adding new files. Unlike `uninstall`, this does **not** copy files back or run teardown.
 
 ```bash
-stau restow zsh                     # Refresh symlinks
-stau restow zsh --run-setup         # Also run setup script
-stau restow zsh --dry-run           # Preview changes
+stau restow ghostty                     # Refresh symlinks
+stau restow ghostty --run-setup         # Also run setup script
+stau restow ghostty --dry-run           # Preview changes
 ```
 
 **Options:**
@@ -155,9 +152,9 @@ stau restow zsh --dry-run           # Preview changes
 Moves existing files from your home directory into the dotfiles repository and replaces them with symlinks. Creates the package directory if it doesn't exist.
 
 ```bash
-stau adopt zsh ~/.zshrc ~/.zshenv   # Adopt multiple files
-stau adopt vim ~/.vimrc             # Adopt single file
-stau adopt shell ~/.bashrc --dry-run # Preview adoption
+stau adopt ghostty ~/.config/ghostty/config  # Adopt config file
+stau adopt git ~/.gitconfig                  # Adopt single file
+stau adopt tmux ~/.tmux.conf --dry-run       # Preview adoption
 ```
 
 **Options:**
@@ -181,11 +178,9 @@ stau list --target /tmp/test        # Check status against custom target
 ```
 Packages in /home/user/dotfiles:
 
+  ghostty              [installed]  1 symlink
   git                  [installed]  1 symlink
-  nvim                 [installed]  3 symlinks
   tmux                 [not installed]
-  vim                  [partial]    2/5 symlinks
-  zsh                  [installed]  2 symlinks  (1 broken)
 ```
 
 **Options:**
@@ -198,26 +193,24 @@ Packages in /home/user/dotfiles:
 Shows detailed status information for a specific package, including each file's symlink state.
 
 ```bash
-stau status zsh                     # Show detailed status
-stau status vim --target /tmp/test  # Check against custom target
+stau status ghostty                     # Show detailed status
+stau status git --target /tmp/test      # Check against custom target
 ```
 
 **Output example:**
 
 ```
-Status for package 'zsh':
+Status for package 'ghostty':
 
-  Package directory: /home/user/dotfiles/zsh
+  Package directory: /home/user/dotfiles/ghostty
   Target directory:  /home/user
-  Setup script:      /home/user/dotfiles/zsh/setup.sh (exists)
+  Setup script:      /home/user/dotfiles/ghostty/setup.sh (exists)
   Teardown script:   (none)
 
-Files (3 total):
-  [installed]      /home/user/.zshrc
-  [installed]      /home/user/.zshenv
-  [not installed]  /home/user/.zprofile
+Files (1 total):
+  [installed]      /home/user/.config/ghostty/config
 
-Summary: 2 installed, 1 not installed, 0 broken
+Summary: 1 installed, 0 not installed, 0 broken
 ```
 
 **Options:**
@@ -230,9 +223,9 @@ Summary: 2 installed, 1 not installed, 0 broken
 Removes broken symlinks for a package. Useful when source files have been deleted or moved.
 
 ```bash
-stau clean zsh                      # Remove broken symlinks
-stau clean zsh --dry-run            # Preview what would be removed
-stau clean zsh --verbose            # Show each symlink being removed
+stau clean ghostty                      # Remove broken symlinks
+stau clean ghostty --dry-run            # Preview what would be removed
+stau clean ghostty --verbose            # Show each symlink being removed
 ```
 
 **Options:**
@@ -263,37 +256,30 @@ Scripts receive these environment variables:
 
 ```bash
 #!/bin/bash
-# ~/dotfiles/zsh/setup.sh
+# ~/dotfiles/ghostty/setup.sh
 
-# Install oh-my-zsh if not present
-if [ ! -d "$STAU_TARGET/.oh-my-zsh" ]; then
-    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+# Ensure ghostty config directory exists
+mkdir -p "$STAU_TARGET/.config/ghostty"
+
+# Set up any additional themes or resources
+if [ ! -d "$STAU_TARGET/.config/ghostty/themes" ]; then
+    echo "Downloading ghostty themes..."
+    mkdir -p "$STAU_TARGET/.config/ghostty/themes"
 fi
 
-# Clone zsh plugins
-ZSH_CUSTOM="$STAU_TARGET/.oh-my-zsh/custom"
-if [ ! -d "$ZSH_CUSTOM/plugins/zsh-autosuggestions" ]; then
-    git clone https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
-fi
-
-if [ ! -d "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" ]; then
-    git clone https://github.com/zsh-users/zsh-syntax-highlighting "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
-fi
-
-echo "ZSH setup complete!"
+echo "Ghostty setup complete!"
 ```
 
 ### Example teardown.sh
 
 ```bash
 #!/bin/bash
-# ~/dotfiles/zsh/teardown.sh
+# ~/dotfiles/ghostty/teardown.sh
 
-# Remove plugins installed during setup
-rm -rf "$STAU_TARGET/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
-rm -rf "$STAU_TARGET/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+# Clean up any additional resources created during setup
+rm -rf "$STAU_TARGET/.config/ghostty/themes"
 
-echo "ZSH teardown complete!"
+echo "Ghostty teardown complete!"
 ```
 
 **Important:** Make scripts executable with `chmod +x setup.sh teardown.sh`
@@ -321,10 +307,10 @@ By default, stau creates symlinks in your home directory (`$HOME`). Override wit
 ```bash
 # Using environment variable
 export STAU_TARGET="/tmp/test"
-stau install zsh
+stau install ghostty
 
 # Using --target flag (takes precedence)
-stau install zsh --target /tmp/test
+stau install ghostty --target /tmp/test
 ```
 
 **Use cases:**
@@ -382,8 +368,7 @@ stau automatically ignores these files in package directories:
 git clone https://github.com/username/dotfiles ~/dotfiles
 
 # Install packages
-stau install zsh
-stau install nvim
+stau install ghostty
 stau install git
 stau install tmux
 ```
@@ -392,11 +377,11 @@ stau install tmux
 
 ```bash
 # Option 1: Adopt existing file
-stau adopt nvim ~/.config/nvim/lua/custom.lua
+stau adopt ghostty ~/.config/ghostty/config
 
 # Option 2: Create in package directory, then restow
-# (edit ~/dotfiles/nvim/.config/nvim/lua/custom.lua)
-stau restow nvim
+# (edit ~/dotfiles/ghostty/.config/ghostty/config)
+stau restow ghostty
 ```
 
 ### Migrating from GNU Stow
