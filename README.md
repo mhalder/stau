@@ -20,7 +20,9 @@ Traditional tools like GNU Stow excel at symlink management but lack automation 
 - **Dry Run Mode**: Preview changes before making them with `--dry-run`
 - **Force Mode**: Override conflicts when needed with `--force`
 - **Broken Symlink Cleanup**: Clean up stale symlinks with the `clean` command
-- **Cross-Platform**: Written in Rust for speed, reliability, and portability
+- **Command Aliases**: Short aliases for common commands (`i`, `u`, `s`, `l`, etc.)
+- **XDG Compliant**: Supports `~/.config/dotfiles` (preferred) and `~/dotfiles` (fallback)
+- **Cross-Platform**: Written in Rust with proper home directory detection on Linux, macOS, and Windows
 
 ## Installation
 
@@ -91,7 +93,7 @@ Organize your dotfiles in a directory structure where each subdirectory is a "pa
 
 ## Commands
 
-### `stau install <package>`
+### `stau install <package>` (aliases: `i`, `add`)
 
 Creates symlinks from your dotfiles package to the target directory and runs the package's `setup.sh` script if present.
 
@@ -113,9 +115,9 @@ stau install zsh --verbose          # Show detailed output
 | `-n, --dry-run` | Show what would be done without making changes |
 | `-v, --verbose` | Show detailed output |
 
-### `stau uninstall <package>`
+### `stau uninstall <package>` (aliases: `u`, `rm`)
 
-Runs `teardown.sh` (if present), removes symlinks, and copies the actual files back to their original locations. This "unadopts" the dotfiles, leaving you with standalone config files.
+Runs `teardown.sh` (if present), removes symlinks, and restores original files from the dotfiles repo. This "unadopts" the dotfiles, leaving you with standalone config files.
 
 ```bash
 stau uninstall zsh                  # Basic uninstall
@@ -135,7 +137,7 @@ stau uninstall zsh --dry-run        # Preview without making changes
 
 **Note:** If the teardown script fails, uninstall continues anyway (with a warning).
 
-### `stau restow <package>`
+### `stau restow <package>` (alias: `r`)
 
 Removes and recreates symlinks for a package. Useful after modifying the package structure or adding new files. Unlike `uninstall`, this does **not** copy files back or run teardown.
 
@@ -153,7 +155,7 @@ stau restow zsh --dry-run           # Preview changes
 | `-n, --dry-run` | Show what would be done without making changes |
 | `-v, --verbose` | Show detailed output |
 
-### `stau adopt <package> <file...>`
+### `stau adopt <package> <file...>` (alias: `a`)
 
 Moves existing files from your home directory into the dotfiles repository and replaces them with symlinks. Creates the package directory if it doesn't exist.
 
@@ -170,7 +172,7 @@ stau adopt shell ~/.bashrc --dry-run # Preview adoption
 | `-n, --dry-run` | Show what would be done without making changes |
 | `-v, --verbose` | Show detailed output |
 
-### `stau list`
+### `stau list` (aliases: `l`, `ls`)
 
 Shows all packages in your dotfiles directory and their installation status.
 
@@ -196,7 +198,7 @@ Packages in /home/user/dotfiles:
 |------|-------------|
 | `-t, --target <DIR>` | Target directory to check status against |
 
-### `stau status <package>`
+### `stau status <package>` (alias: `s`)
 
 Shows detailed status information for a specific package, including each file's symlink state.
 
@@ -228,7 +230,7 @@ Summary: 2 installed, 1 not installed, 0 broken
 |------|-------------|
 | `-t, --target <DIR>` | Target directory to check status against |
 
-### `stau clean <package>`
+### `stau clean <package>` (alias: `c`)
 
 Removes broken symlinks for a package. Useful when source files have been deleted or moved.
 
@@ -305,7 +307,13 @@ echo "ZSH teardown complete!"
 
 ### STAU_DIR (Dotfiles Directory)
 
-stau looks for your dotfiles at `~/dotfiles` by default. Override with the `STAU_DIR` environment variable:
+stau looks for your dotfiles in the following locations (in order of priority):
+
+1. `$STAU_DIR` environment variable (if set)
+2. `~/.config/dotfiles` (XDG-compliant, preferred)
+3. `~/dotfiles` (legacy fallback)
+
+Override with the `STAU_DIR` environment variable:
 
 ```bash
 export STAU_DIR="$HOME/.dotfiles"
