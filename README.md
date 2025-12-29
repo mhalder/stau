@@ -18,7 +18,6 @@ Traditional tools like GNU Stow excel at symlink management but lack automation 
 - **Easy Adoption**: Migrate existing dotfiles into stau management with a single command
 - **Conflict Detection**: Safely detects and reports conflicts before overwriting files
 - **Dry Run Mode**: Preview changes before making them with `--dry-run`
-- **Force Mode**: Override conflicts when needed with `--force`
 - **Broken Symlink Cleanup**: Clean up stale symlinks with the `clean` command
 - **Command Aliases**: Short aliases for common commands (`i`, `u`, `s`, `l`, etc.)
 - **XDG Compliant**: Supports `~/.config/dotfiles` (preferred) and `~/dotfiles` (fallback)
@@ -100,7 +99,6 @@ Creates symlinks from your dotfiles package to the target directory and runs the
 ```bash
 stau install zsh                    # Basic install
 stau install zsh --no-setup         # Skip setup script
-stau install zsh --force            # Overwrite existing files
 stau install zsh --target /tmp/test # Install to custom directory
 stau install zsh --dry-run          # Preview without making changes
 stau install zsh --verbose          # Show detailed output
@@ -110,7 +108,6 @@ stau install zsh --verbose          # Show detailed output
 | Flag | Description |
 |------|-------------|
 | `--no-setup` | Skip running the setup script |
-| `-f, --force` | Force install even if conflicts exist (overwrites files) |
 | `-t, --target <DIR>` | Target directory (default: `$HOME` or `$STAU_TARGET`) |
 | `-n, --dry-run` | Show what would be done without making changes |
 | `-v, --verbose` | Show detailed output |
@@ -122,7 +119,6 @@ Runs `teardown.sh` (if present), removes symlinks, and restores original files f
 ```bash
 stau uninstall zsh                  # Basic uninstall
 stau uninstall zsh --no-teardown    # Skip teardown script
-stau uninstall zsh --force          # Force uninstall with conflicts
 stau uninstall zsh --dry-run        # Preview without making changes
 ```
 
@@ -130,7 +126,6 @@ stau uninstall zsh --dry-run        # Preview without making changes
 | Flag | Description |
 |------|-------------|
 | `--no-teardown` | Skip running the teardown script |
-| `--force` | Force uninstall even if conflicts exist |
 | `-t, --target <DIR>` | Target directory (default: `$HOME` or `$STAU_TARGET`) |
 | `-n, --dry-run` | Show what would be done without making changes |
 | `-v, --verbose` | Show detailed output |
@@ -347,7 +342,7 @@ stau uses specific exit codes to indicate different error conditions:
 | ---- | --------------------------------------------------------------------- |
 | 0    | Success                                                               |
 | 1    | Package not found, STAU_DIR not found, invalid path, or general error |
-| 2    | Conflicting file exists (use `--force` to override)                   |
+| 2    | Conflicting file exists                                               |
 | 3    | Permission denied or I/O error                                        |
 | 4    | Setup or teardown script failed                                       |
 
