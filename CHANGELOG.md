@@ -1,3 +1,9 @@
+## [1.1.0](https://github.com/mhalder/stau/compare/v1.0.2...v1.1.0) (2025-12-29)
+
+### Features
+
+* add command aliases, XDG compliance, and cross-platform support ([#8](https://github.com/mhalder/stau/issues/8)) ([d021670](https://github.com/mhalder/stau/commit/d02167020d551468a2c1c4bc21d7d759c3d6ca9b)), closes [#5](https://github.com/mhalder/stau/issues/5)
+
 ## [1.0.2](https://github.com/mhalder/stau/compare/v1.0.1...v1.0.2) (2025-10-15)
 
 ### Bug Fixes
