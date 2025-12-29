@@ -1,3 +1,23 @@
+## [2.0.0](https://github.com/mhalder/stau/compare/v1.1.0...v2.0.0) (2025-12-29)
+
+### ⚠ BREAKING CHANGES
+
+* Remove --force/-f flags from install and uninstall commands.
+
+Users should now either remove conflicting files manually or use
+'stau adopt' to bring existing files under stau management.
+
+- Remove --force/-f from install command
+- Remove --force from uninstall command
+- Simplify create_symlink to error on conflicts
+- Update error messages to remove --force suggestion
+- Update README documentation
+- Remove force-related tests
+
+### Features
+
+* remove --force command line flags ([#10](https://github.com/mhalder/stau/issues/10)) ([5d46b72](https://github.com/mhalder/stau/commit/5d46b729d992a43dc1702238cd89eaef584de144)), closes [#9](https://github.com/mhalder/stau/issues/9)
+
 ## [1.1.0](https://github.com/mhalder/stau/compare/v1.0.2...v1.1.0) (2025-12-29)
 
 ### Features
