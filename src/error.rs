@@ -12,7 +12,7 @@ pub enum StauError {
     PackageNotFound(String),
 
     #[error(
-        "Conflicting file exists: {0}\nHint: A file already exists at this location. Either:\n  - Remove the existing file manually\n  - Use --force to overwrite it (caution: this will delete the existing file)\n  - Adopt the existing file with 'stau adopt <package> {0}'"
+        "Conflicting file exists: {0}\nHint: A file already exists at this location. Either:\n  - Remove the existing file manually\n  - Adopt the existing file with 'stau adopt <package> {0}'"
     )]
     ConflictingFile(PathBuf),
 
@@ -81,7 +81,6 @@ mod tests {
         let err = StauError::ConflictingFile(path.clone());
         assert_eq!(err.exit_code(), 2);
         assert!(err.to_string().contains("/home/user/.vimrc"));
-        assert!(err.to_string().contains("--force"));
         assert!(err.to_string().contains("stau adopt"));
     }
 
