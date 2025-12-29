@@ -5,7 +5,7 @@ use std::path::PathBuf;
 /// Configuration for stau, handles STAU_DIR and STAU_TARGET environment variables
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Directory where dotfiles are stored (default: ~/dotfiles)
+    /// Directory where dotfiles are stored (default: ~/.config/dotfiles or ~/dotfiles)
     pub stau_dir: PathBuf,
     /// Default target directory for symlinks (default: $HOME)
     pub default_target: PathBuf,
@@ -23,7 +23,8 @@ impl Config {
         })
     }
 
-    /// Get STAU_DIR from environment or use default ~/dotfiles
+    /// Get STAU_DIR from environment or use default paths
+    /// Priority: $STAU_DIR > ~/.config/dotfiles > ~/dotfiles
     fn get_stau_dir() -> Result<PathBuf> {
         if let Ok(dir) = env::var("STAU_DIR") {
             let path = PathBuf::from(dir);
@@ -33,14 +34,22 @@ impl Config {
                 Err(StauError::StauDirNotFound(path))
             }
         } else {
-            // Default to ~/dotfiles
             let home = Self::get_home_dir()?;
-            let dotfiles = home.join("dotfiles");
-            if dotfiles.exists() {
-                Ok(dotfiles)
-            } else {
-                Err(StauError::StauDirNotFound(dotfiles))
+
+            // XDG-compliant path: ~/.config/dotfiles (preferred)
+            let xdg_dotfiles = home.join(".config").join("dotfiles");
+            if xdg_dotfiles.exists() {
+                return Ok(xdg_dotfiles);
             }
+
+            // Legacy path: ~/dotfiles
+            let legacy_dotfiles = home.join("dotfiles");
+            if legacy_dotfiles.exists() {
+                return Ok(legacy_dotfiles);
+            }
+
+            // Neither exists, report the XDG path as the preferred location
+            Err(StauError::StauDirNotFound(xdg_dotfiles))
         }
     }
 
@@ -53,11 +62,17 @@ impl Config {
         }
     }
 
-    /// Get the user's home directory
+    /// Get the user's home directory (cross-platform)
     fn get_home_dir() -> Result<PathBuf> {
+        // First try the dirs crate for cross-platform support
+        if let Some(home) = dirs::home_dir() {
+            return Ok(home);
+        }
+
+        // Fallback to HOME environment variable (Unix)
         env::var("HOME")
             .map(PathBuf::from)
-            .map_err(|_| StauError::Other("HOME environment variable not set".to_string()))
+            .map_err(|_| StauError::Other("Could not determine home directory".to_string()))
     }
 
     /// Get the target directory, using provided override or default
@@ -280,5 +295,51 @@ mod tests {
         // Should return None since setup.sh is not a file
         let script = config.get_setup_script("vim");
         assert!(script.is_none());
+    }
+
+    #[test]
+    fn test_xdg_path_preferred_over_legacy() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create both XDG and legacy paths
+        let xdg_dotfiles = temp_dir.path().join(".config").join("dotfiles");
+        let legacy_dotfiles = temp_dir.path().join("dotfiles");
+        fs::create_dir_all(&xdg_dotfiles).unwrap();
+        fs::create_dir(&legacy_dotfiles).unwrap();
+
+        // Mock HOME to point to temp_dir
+        temp_env::with_vars(
+            vec![
+                ("HOME", Some(temp_dir.path().to_str().unwrap())),
+                ("STAU_DIR", None::<&str>),
+            ],
+            || {
+                let config = Config::new().unwrap();
+                // Should prefer XDG path over legacy
+                assert_eq!(config.stau_dir, xdg_dotfiles);
+            },
+        );
+    }
+
+    #[test]
+    fn test_legacy_path_fallback() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Only create legacy path
+        let legacy_dotfiles = temp_dir.path().join("dotfiles");
+        fs::create_dir(&legacy_dotfiles).unwrap();
+
+        // Mock HOME to point to temp_dir
+        temp_env::with_vars(
+            vec![
+                ("HOME", Some(temp_dir.path().to_str().unwrap())),
+                ("STAU_DIR", None::<&str>),
+            ],
+            || {
+                let config = Config::new().unwrap();
+                // Should fall back to legacy path
+                assert_eq!(config.stau_dir, legacy_dotfiles);
+            },
+        );
     }
 }

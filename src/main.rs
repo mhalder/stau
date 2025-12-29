@@ -33,6 +33,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Install a package by creating symlinks
+    #[command(visible_alias = "i", visible_alias = "add")]
     Install {
         /// Package name to install
         package: String,
@@ -50,7 +51,8 @@ enum Commands {
         force: bool,
     },
 
-    /// Uninstall a package by removing symlinks and copying files back
+    /// Uninstall a package (removes symlinks and restores original files from dotfiles repo)
+    #[command(visible_alias = "u", visible_alias = "rm")]
     Uninstall {
         /// Package name to uninstall
         package: String,
@@ -69,6 +71,7 @@ enum Commands {
     },
 
     /// Restow a package (uninstall and reinstall)
+    #[command(visible_alias = "r")]
     Restow {
         /// Package name to restow
         package: String,
@@ -83,6 +86,7 @@ enum Commands {
     },
 
     /// Adopt existing files into a package
+    #[command(visible_alias = "a")]
     Adopt {
         /// Package name to adopt files into
         package: String,
@@ -97,6 +101,7 @@ enum Commands {
     },
 
     /// List all packages and their installation status
+    #[command(visible_alias = "l", visible_alias = "ls")]
     List {
         /// Target directory to check status (default: $HOME or $STAU_TARGET)
         #[arg(short, long, env = "STAU_TARGET")]
@@ -104,6 +109,7 @@ enum Commands {
     },
 
     /// Show detailed status for a specific package
+    #[command(visible_alias = "s")]
     Status {
         /// Package name to show status for
         package: String,
@@ -114,6 +120,7 @@ enum Commands {
     },
 
     /// Clean up broken symlinks for a package
+    #[command(visible_alias = "c")]
     Clean {
         /// Package name to clean
         package: String,

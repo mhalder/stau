@@ -39,6 +39,49 @@ pub fn is_stau_symlink(path: &Path, expected_target: &Path) -> Result<bool> {
     }
 }
 
+/// Check if a path or any of its ancestors is a symlink pointing into a dotfiles directory.
+/// This helps detect directory symlinks created by other tools (stow, tuckr, etc.)
+/// Returns the symlink path if found, None otherwise.
+#[allow(dead_code)]
+pub fn find_symlink_in_path(path: &Path, stau_dir: &Path) -> Option<PathBuf> {
+    let mut current = path.to_path_buf();
+
+    while let Some(parent) = current.parent() {
+        if let Ok(metadata) = current.symlink_metadata()
+            && metadata.is_symlink()
+            && let Ok(link_target) = fs::read_link(&current)
+        {
+            // Check if the symlink points into the stau_dir
+            let resolved = if link_target.is_absolute() {
+                link_target
+            } else {
+                parent.join(&link_target)
+            };
+
+            if let Ok(canonical) = resolved.canonicalize()
+                && let Ok(stau_canonical) = stau_dir.canonicalize()
+                && canonical.starts_with(&stau_canonical)
+            {
+                return Some(current);
+            }
+        }
+        current = parent.to_path_buf();
+    }
+    None
+}
+
+/// Check if a path is managed by stau (either directly or via a parent directory symlink)
+#[allow(dead_code)]
+pub fn is_managed_path(path: &Path, expected_target: &Path, stau_dir: &Path) -> Result<bool> {
+    // First check if it's a direct symlink
+    if is_stau_symlink(path, expected_target)? {
+        return Ok(true);
+    }
+
+    // Then check if any parent is a symlink pointing into stau_dir
+    Ok(find_symlink_in_path(path, stau_dir).is_some())
+}
+
 /// Check if a symlink is broken (points to non-existent file)
 pub fn is_broken_symlink(path: &Path) -> bool {
     if let Ok(metadata) = path.symlink_metadata()
@@ -48,6 +91,54 @@ pub fn is_broken_symlink(path: &Path) -> bool {
         return !path.exists();
     }
     false
+}
+
+/// Remove a directory symlink that points into the dotfiles directory.
+/// This helps users migrate from tools that use directory symlinks (stow, tuckr, etc.)
+/// Returns Ok(true) if a symlink was removed, Ok(false) if not applicable.
+#[allow(dead_code)]
+pub fn remove_directory_symlink(path: &Path, stau_dir: &Path, dry_run: bool) -> Result<bool> {
+    // Check if path is a symlink
+    let metadata = match path.symlink_metadata() {
+        Ok(m) => m,
+        Err(_) => return Ok(false),
+    };
+
+    if !metadata.is_symlink() {
+        return Ok(false);
+    }
+
+    // Check if the symlink points into stau_dir
+    if let Ok(link_target) = fs::read_link(path) {
+        let resolved = if link_target.is_absolute() {
+            link_target
+        } else if let Some(parent) = path.parent() {
+            parent.join(&link_target)
+        } else {
+            link_target
+        };
+
+        if let Ok(canonical) = resolved.canonicalize()
+            && let Ok(stau_canonical) = stau_dir.canonicalize()
+            && canonical.starts_with(&stau_canonical)
+        {
+            if !dry_run {
+                fs::remove_file(path).map_err(|e| {
+                    if e.kind() == std::io::ErrorKind::PermissionDenied {
+                        StauError::PermissionDenied(format!(
+                            "Cannot remove symlink: {}",
+                            path.display()
+                        ))
+                    } else {
+                        StauError::Io(e)
+                    }
+                })?;
+            }
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 /// Create a symlink, ensuring parent directories exist
@@ -496,5 +587,138 @@ mod tests {
 
         assert_eq!(mapping1, mapping2);
         assert_ne!(mapping1, mapping3);
+    }
+
+    #[test]
+    fn test_find_symlink_in_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let stau_dir = temp_dir.path().join("dotfiles");
+        let target_dir = temp_dir.path().join("home");
+
+        fs::create_dir(&stau_dir).unwrap();
+        fs::create_dir(&target_dir).unwrap();
+
+        // Create a package with nested structure
+        let package_config = stau_dir.join("vim").join(".config").join("nvim");
+        fs::create_dir_all(&package_config).unwrap();
+        File::create(package_config.join("init.lua")).unwrap();
+
+        // Create a directory symlink (like stow would)
+        let target_config = target_dir.join(".config");
+        unix_fs::symlink(stau_dir.join("vim").join(".config"), &target_config).unwrap();
+
+        // Check that we can find the symlink from a nested path
+        let nested_path = target_config.join("nvim").join("init.lua");
+        let found = find_symlink_in_path(&nested_path, &stau_dir);
+        assert!(found.is_some());
+        assert_eq!(found.unwrap(), target_config);
+    }
+
+    #[test]
+    fn test_find_symlink_in_path_not_found() {
+        let temp_dir = TempDir::new().unwrap();
+        let stau_dir = temp_dir.path().join("dotfiles");
+        let target_dir = temp_dir.path().join("home");
+
+        fs::create_dir(&stau_dir).unwrap();
+        fs::create_dir(&target_dir).unwrap();
+
+        // Create a real directory (not a symlink)
+        let target_config = target_dir.join(".config").join("nvim");
+        fs::create_dir_all(&target_config).unwrap();
+        File::create(target_config.join("init.lua")).unwrap();
+
+        // No symlink should be found
+        let found = find_symlink_in_path(&target_config.join("init.lua"), &stau_dir);
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn test_remove_directory_symlink() {
+        let temp_dir = TempDir::new().unwrap();
+        let stau_dir = temp_dir.path().join("dotfiles");
+        let target_dir = temp_dir.path().join("home");
+
+        fs::create_dir(&stau_dir).unwrap();
+        fs::create_dir(&target_dir).unwrap();
+
+        // Create a package directory
+        let package_config = stau_dir.join("vim").join(".config");
+        fs::create_dir_all(&package_config).unwrap();
+
+        // Create a directory symlink
+        let target_config = target_dir.join(".config");
+        unix_fs::symlink(&package_config, &target_config).unwrap();
+
+        // Remove the directory symlink
+        let removed = remove_directory_symlink(&target_config, &stau_dir, false).unwrap();
+        assert!(removed);
+        assert!(!target_config.exists());
+    }
+
+    #[test]
+    fn test_remove_directory_symlink_dry_run() {
+        let temp_dir = TempDir::new().unwrap();
+        let stau_dir = temp_dir.path().join("dotfiles");
+        let target_dir = temp_dir.path().join("home");
+
+        fs::create_dir(&stau_dir).unwrap();
+        fs::create_dir(&target_dir).unwrap();
+
+        // Create a package directory
+        let package_config = stau_dir.join("vim").join(".config");
+        fs::create_dir_all(&package_config).unwrap();
+
+        // Create a directory symlink
+        let target_config = target_dir.join(".config");
+        unix_fs::symlink(&package_config, &target_config).unwrap();
+
+        // Dry run should not remove
+        let removed = remove_directory_symlink(&target_config, &stau_dir, true).unwrap();
+        assert!(removed);
+        assert!(target_config.symlink_metadata().is_ok()); // Still exists
+    }
+
+    #[test]
+    fn test_remove_directory_symlink_not_in_stau_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let stau_dir = temp_dir.path().join("dotfiles");
+        let other_dir = temp_dir.path().join("other");
+        let target_dir = temp_dir.path().join("home");
+
+        fs::create_dir(&stau_dir).unwrap();
+        fs::create_dir(&other_dir).unwrap();
+        fs::create_dir(&target_dir).unwrap();
+
+        // Create a symlink pointing elsewhere (not in stau_dir)
+        let target_config = target_dir.join(".config");
+        unix_fs::symlink(&other_dir, &target_config).unwrap();
+
+        // Should not remove symlinks pointing outside stau_dir
+        let removed = remove_directory_symlink(&target_config, &stau_dir, false).unwrap();
+        assert!(!removed);
+        assert!(target_config.symlink_metadata().is_ok()); // Still exists
+    }
+
+    #[test]
+    fn test_is_managed_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let stau_dir = temp_dir.path().join("dotfiles");
+        let target_dir = temp_dir.path().join("home");
+
+        fs::create_dir(&stau_dir).unwrap();
+        fs::create_dir(&target_dir).unwrap();
+
+        // Create source file
+        let source = stau_dir.join("vim").join(".vimrc");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        File::create(&source).unwrap();
+
+        // Create direct symlink
+        let target = target_dir.join(".vimrc");
+        unix_fs::symlink(&source, &target).unwrap();
+
+        // Should be detected as managed
+        assert!(is_managed_path(&target, &source, &stau_dir).unwrap());
     }
 }
