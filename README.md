@@ -13,154 +13,392 @@ Traditional tools like GNU Stow excel at symlink management but lack automation 
 
 ## Features
 
-- **Symlink Management**: Stow-like symlinking from a dotfiles repository to your home or a custom directory
-- **Setup Scripts**: Run package-specific setup/teardown scripts for automated configuration
+- **Symlink Management**: GNU Stow-style symlinking from a dotfiles repository to your home directory or custom target
+- **Setup/Teardown Scripts**: Run package-specific scripts for automated configuration during install/uninstall
 - **Easy Adoption**: Migrate existing dotfiles into stau management with a single command
-- **Written in Rust**: Fast, reliable, and cross-platform
-
-## Quick Start
-
-```bash
-# Install a package (creates symlinks + runs setup script)
-stau install <package> [--target <dir>]
-
-# Adopt an existing dotfile into management
-stau adopt <package> <file...> [--target <dir>]
-
-# List managed packages
-stau list [--target <dir>]
-
-# Uninstall a package (removes symlinks, copies files back)
-stau uninstall <package> [--target <dir>]
-
-# Refresh symlinks for a package
-stau restow <package> [--target <dir>]
-```
-
-## Project Structure
-
-```
-~/dotfiles/              # Your dotfiles repository
-├── zsh/
-│   ├── .zshrc
-│   ├── .zshenv
-│   ├── setup.sh         # Optional: runs on 'stau install zsh'
-│   └── teardown.sh      # Optional: runs on 'stau uninstall zsh'
-├── nvim/
-│   └── .config/
-│       └── nvim/
-│           └── init.lua
-└── git/
-    └── .gitconfig
-```
-
-## Commands
-
-**`stau install <package>`**
-Creates symlinks from `~/dotfiles/<package>/` to your home directory and runs the package's `setup.sh` script if it exists.
-
-**`stau uninstall <package>`**
-Runs `teardown.sh` (if it exists), removes symlinks, and copies the actual files back to their original locations. This "unadopts" the dotfiles, leaving you with standalone config files.
-
-**`stau adopt <package> <file...>`**
-Moves existing files from your home directory into the dotfiles repository and replaces them with symlinks.
-
-```bash
-stau adopt zsh ~/.zshrc ~/.zshenv
-# Moves files to ~/dotfiles/zsh/ and creates symlinks
-```
-
-**`stau list`**
-Shows all managed packages and their status.
-
-**`stau restow <package>`**
-Removes and recreates symlinks for a package (useful after modifying the package structure).
-
-## Setup Scripts
-
-Each package can have optional scripts:
-
-- **`setup.sh`**: Run during `stau install` for initial setup (install dependencies, clone repos, etc.)
-- **`teardown.sh`**: Run during `stau uninstall` for cleanup (optional)
-
-Example `~/dotfiles/zsh/setup.sh`:
-
-```bash
-#!/bin/bash
-# Install oh-my-zsh
-if [ ! -d "$STAU_TARGET/.oh-my-zsh" ]; then
-    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
-fi
-
-# Clone zsh plugins
-git clone https://github.com/zsh-users/zsh-autosuggestions "$STAU_TARGET/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
-```
-
-Example `~/dotfiles/zsh/teardown.sh`:
-
-```bash
-#!/bin/bash
-# Remove plugins installed during setup
-rm -rf "$STAU_TARGET/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
-```
-
-**Note**: Scripts receive these environment variables:
-
-- `STAU_DIR`: Path to your dotfiles directory
-- `STAU_PACKAGE`: Current package name
-- `STAU_TARGET`: Where symlinks are created (use this instead of hardcoding `$HOME`)
-
-## Configuration
-
-### Dotfiles Directory
-
-stau looks for your dotfiles directory at `~/dotfiles` by default. You can override this with the `STAU_DIR` environment variable:
-
-```bash
-export STAU_DIR="$HOME/.dotfiles"
-```
-
-### Target Directory
-
-By default, stau creates symlinks in your home directory (`$HOME`). You can specify a different target directory using the `--target` flag or `STAU_TARGET` environment variable:
-
-```bash
-# Test installation without affecting your real home directory
-stau install zsh --target /tmp/test-home
-
-# Manage system configs
-sudo stau install nginx --target /etc
-
-# Use environment variable
-export STAU_TARGET=/tmp/test
-stau install zsh
-stau list
-```
-
-This is useful for:
-
-- **Testing**: Try out configurations in a temporary directory
-- **Dry runs**: See what would happen without modifying your actual files
-- **System configs**: Manage `/etc` or other system directories
-- **Multiple users**: Install configs for different users
+- **Conflict Detection**: Safely detects and reports conflicts before overwriting files
+- **Dry Run Mode**: Preview changes before making them with `--dry-run`
+- **Force Mode**: Override conflicts when needed with `--force`
+- **Broken Symlink Cleanup**: Clean up stale symlinks with the `clean` command
+- **Cross-Platform**: Written in Rust for speed, reliability, and portability
 
 ## Installation
+
+### From crates.io
 
 ```bash
 cargo install stau
 ```
 
-Or build from source:
+### From source
 
 ```bash
 git clone https://github.com/mhalder/stau
 cd stau
 cargo build --release
+# Binary will be at target/release/stau
 ```
 
-## License
+### Pre-built binaries
 
-[MIT](LICENSE)
+Download pre-built binaries for Linux, macOS (Intel/Apple Silicon), and Windows from the [releases page](https://github.com/mhalder/stau/releases).
+
+## Quick Start
+
+```bash
+# Install a package (creates symlinks + runs setup script)
+stau install zsh
+
+# List all packages and their status
+stau list
+
+# Show detailed status for a specific package
+stau status zsh
+
+# Adopt existing dotfiles into stau management
+stau adopt zsh ~/.zshrc ~/.zshenv
+
+# Uninstall a package (removes symlinks, copies files back)
+stau uninstall zsh
+
+# Refresh symlinks for a package
+stau restow zsh
+
+# Clean up broken symlinks
+stau clean zsh
+```
+
+## Project Structure
+
+Organize your dotfiles in a directory structure where each subdirectory is a "package":
+
+```
+~/dotfiles/                    # Your dotfiles repository (STAU_DIR)
+├── zsh/
+│   ├── .zshrc                 # Symlinked to ~/.zshrc
+│   ├── .zshenv                # Symlinked to ~/.zshenv
+│   ├── setup.sh               # Optional: runs on 'stau install zsh'
+│   └── teardown.sh            # Optional: runs on 'stau uninstall zsh'
+├── nvim/
+│   └── .config/
+│       └── nvim/
+│           └── init.lua       # Symlinked to ~/.config/nvim/init.lua
+├── git/
+│   └── .gitconfig             # Symlinked to ~/.gitconfig
+└── tmux/
+    └── .tmux.conf             # Symlinked to ~/.tmux.conf
+```
+
+## Commands
+
+### `stau install <package>`
+
+Creates symlinks from your dotfiles package to the target directory and runs the package's `setup.sh` script if present.
+
+```bash
+stau install zsh                    # Basic install
+stau install zsh --no-setup         # Skip setup script
+stau install zsh --force            # Overwrite existing files
+stau install zsh --target /tmp/test # Install to custom directory
+stau install zsh --dry-run          # Preview without making changes
+stau install zsh --verbose          # Show detailed output
+```
+
+**Options:**
+| Flag | Description |
+|------|-------------|
+| `--no-setup` | Skip running the setup script |
+| `-f, --force` | Force install even if conflicts exist (overwrites files) |
+| `-t, --target <DIR>` | Target directory (default: `$HOME` or `$STAU_TARGET`) |
+| `-n, --dry-run` | Show what would be done without making changes |
+| `-v, --verbose` | Show detailed output |
+
+### `stau uninstall <package>`
+
+Runs `teardown.sh` (if present), removes symlinks, and copies the actual files back to their original locations. This "unadopts" the dotfiles, leaving you with standalone config files.
+
+```bash
+stau uninstall zsh                  # Basic uninstall
+stau uninstall zsh --no-teardown    # Skip teardown script
+stau uninstall zsh --force          # Force uninstall with conflicts
+stau uninstall zsh --dry-run        # Preview without making changes
+```
+
+**Options:**
+| Flag | Description |
+|------|-------------|
+| `--no-teardown` | Skip running the teardown script |
+| `--force` | Force uninstall even if conflicts exist |
+| `-t, --target <DIR>` | Target directory (default: `$HOME` or `$STAU_TARGET`) |
+| `-n, --dry-run` | Show what would be done without making changes |
+| `-v, --verbose` | Show detailed output |
+
+**Note:** If the teardown script fails, uninstall continues anyway (with a warning).
+
+### `stau restow <package>`
+
+Removes and recreates symlinks for a package. Useful after modifying the package structure or adding new files. Unlike `uninstall`, this does **not** copy files back or run teardown.
+
+```bash
+stau restow zsh                     # Refresh symlinks
+stau restow zsh --run-setup         # Also run setup script
+stau restow zsh --dry-run           # Preview changes
+```
+
+**Options:**
+| Flag | Description |
+|------|-------------|
+| `--run-setup` | Run the setup script during restow |
+| `-t, --target <DIR>` | Target directory |
+| `-n, --dry-run` | Show what would be done without making changes |
+| `-v, --verbose` | Show detailed output |
+
+### `stau adopt <package> <file...>`
+
+Moves existing files from your home directory into the dotfiles repository and replaces them with symlinks. Creates the package directory if it doesn't exist.
+
+```bash
+stau adopt zsh ~/.zshrc ~/.zshenv   # Adopt multiple files
+stau adopt vim ~/.vimrc             # Adopt single file
+stau adopt shell ~/.bashrc --dry-run # Preview adoption
+```
+
+**Options:**
+| Flag | Description |
+|------|-------------|
+| `-t, --target <DIR>` | Target directory |
+| `-n, --dry-run` | Show what would be done without making changes |
+| `-v, --verbose` | Show detailed output |
+
+### `stau list`
+
+Shows all packages in your dotfiles directory and their installation status.
+
+```bash
+stau list                           # List all packages
+stau list --target /tmp/test        # Check status against custom target
+```
+
+**Output example:**
+
+```
+Packages in /home/user/dotfiles:
+
+  git                  [installed]  1 symlink
+  nvim                 [installed]  3 symlinks
+  tmux                 [not installed]
+  vim                  [partial]    2/5 symlinks
+  zsh                  [installed]  2 symlinks  (1 broken)
+```
+
+**Options:**
+| Flag | Description |
+|------|-------------|
+| `-t, --target <DIR>` | Target directory to check status against |
+
+### `stau status <package>`
+
+Shows detailed status information for a specific package, including each file's symlink state.
+
+```bash
+stau status zsh                     # Show detailed status
+stau status vim --target /tmp/test  # Check against custom target
+```
+
+**Output example:**
+
+```
+Status for package 'zsh':
+
+  Package directory: /home/user/dotfiles/zsh
+  Target directory:  /home/user
+  Setup script:      /home/user/dotfiles/zsh/setup.sh (exists)
+  Teardown script:   (none)
+
+Files (3 total):
+  [installed]      /home/user/.zshrc
+  [installed]      /home/user/.zshenv
+  [not installed]  /home/user/.zprofile
+
+Summary: 2 installed, 1 not installed, 0 broken
+```
+
+**Options:**
+| Flag | Description |
+|------|-------------|
+| `-t, --target <DIR>` | Target directory to check status against |
+
+### `stau clean <package>`
+
+Removes broken symlinks for a package. Useful when source files have been deleted or moved.
+
+```bash
+stau clean zsh                      # Remove broken symlinks
+stau clean zsh --dry-run            # Preview what would be removed
+stau clean zsh --verbose            # Show each symlink being removed
+```
+
+**Options:**
+| Flag | Description |
+|------|-------------|
+| `-t, --target <DIR>` | Target directory |
+| `-n, --dry-run` | Show what would be done without making changes |
+| `-v, --verbose` | Show detailed output |
+
+## Setup and Teardown Scripts
+
+Each package can have optional automation scripts:
+
+- **`setup.sh`**: Runs during `stau install` for initial setup (install dependencies, clone repos, etc.)
+- **`teardown.sh`**: Runs during `stau uninstall` for cleanup
+
+### Environment Variables Available to Scripts
+
+Scripts receive these environment variables:
+
+| Variable       | Description                                                            |
+| -------------- | ---------------------------------------------------------------------- |
+| `STAU_DIR`     | Path to your dotfiles directory                                        |
+| `STAU_PACKAGE` | Current package name                                                   |
+| `STAU_TARGET`  | Target directory for symlinks (use this instead of hardcoding `$HOME`) |
+
+### Example setup.sh
+
+```bash
+#!/bin/bash
+# ~/dotfiles/zsh/setup.sh
+
+# Install oh-my-zsh if not present
+if [ ! -d "$STAU_TARGET/.oh-my-zsh" ]; then
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+fi
+
+# Clone zsh plugins
+ZSH_CUSTOM="$STAU_TARGET/.oh-my-zsh/custom"
+if [ ! -d "$ZSH_CUSTOM/plugins/zsh-autosuggestions" ]; then
+    git clone https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
+fi
+
+if [ ! -d "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" ]; then
+    git clone https://github.com/zsh-users/zsh-syntax-highlighting "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+fi
+
+echo "ZSH setup complete!"
+```
+
+### Example teardown.sh
+
+```bash
+#!/bin/bash
+# ~/dotfiles/zsh/teardown.sh
+
+# Remove plugins installed during setup
+rm -rf "$STAU_TARGET/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+rm -rf "$STAU_TARGET/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+
+echo "ZSH teardown complete!"
+```
+
+**Important:** Make scripts executable with `chmod +x setup.sh teardown.sh`
+
+## Configuration
+
+### STAU_DIR (Dotfiles Directory)
+
+stau looks for your dotfiles at `~/dotfiles` by default. Override with the `STAU_DIR` environment variable:
+
+```bash
+export STAU_DIR="$HOME/.dotfiles"
+```
+
+### STAU_TARGET (Target Directory)
+
+By default, stau creates symlinks in your home directory (`$HOME`). Override with `--target` flag or `STAU_TARGET` environment variable:
+
+```bash
+# Using environment variable
+export STAU_TARGET="/tmp/test"
+stau install zsh
+
+# Using --target flag (takes precedence)
+stau install zsh --target /tmp/test
+```
+
+**Use cases:**
+
+- **Testing**: Try configurations in a temporary directory
+- **Dry runs**: See what would happen without modifying real files
+- **System configs**: Manage `/etc` or other system directories
+- **Multiple users**: Install configs for different users
+
+## Exit Codes
+
+stau uses specific exit codes to indicate different error conditions:
+
+| Code | Meaning                                                               |
+| ---- | --------------------------------------------------------------------- |
+| 0    | Success                                                               |
+| 1    | Package not found, STAU_DIR not found, invalid path, or general error |
+| 2    | Conflicting file exists (use `--force` to override)                   |
+| 3    | Permission denied or I/O error                                        |
+| 4    | Setup or teardown script failed                                       |
+
+## Global Options
+
+These options work with all commands:
+
+| Flag        | Short | Description                                       |
+| ----------- | ----- | ------------------------------------------------- |
+| `--verbose` | `-v`  | Enable verbose output showing detailed operations |
+| `--dry-run` | `-n`  | Show what would be done without making changes    |
+| `--help`    | `-h`  | Show help information                             |
+| `--version` | `-V`  | Show version information                          |
+
+## Ignored Files
+
+stau automatically ignores these files in package directories:
+
+- `setup.sh` and `teardown.sh` (script files)
+- `.git`, `.gitignore`, `.gitattributes`, `.gitmodules` (version control, at package root only)
+
+## Tips and Best Practices
+
+1. **Start with dry-run**: Use `--dry-run` to preview changes before making them
+2. **Use verbose mode**: Add `--verbose` when troubleshooting
+3. **Keep scripts idempotent**: Setup scripts should be safe to run multiple times
+4. **Test in isolation**: Use `--target /tmp/test` to test packages safely
+5. **Commit before changes**: If your dotfiles are in git, commit before running stau commands
+6. **Document dependencies**: Note any system dependencies in your README or setup scripts
+
+## Common Workflows
+
+### Setting up a new machine
+
+```bash
+# Clone your dotfiles
+git clone https://github.com/username/dotfiles ~/dotfiles
+
+# Install packages
+stau install zsh
+stau install nvim
+stau install git
+stau install tmux
+```
+
+### Adding a new dotfile
+
+```bash
+# Option 1: Adopt existing file
+stau adopt nvim ~/.config/nvim/lua/custom.lua
+
+# Option 2: Create in package directory, then restow
+# (edit ~/dotfiles/nvim/.config/nvim/lua/custom.lua)
+stau restow nvim
+```
+
+### Migrating from GNU Stow
+
+stau uses the same directory structure as GNU Stow. Simply set `STAU_DIR` to your existing stow directory and start using stau commands. Add `setup.sh`/`teardown.sh` scripts as needed.
 
 ## Versioning
 
@@ -172,6 +410,10 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
 
+## License
+
+[MIT](LICENSE)
+
 ## Contributing
 
-Contributions welcome! Please open an issue or pull request.
+Contributions welcome! Please open an issue or pull request on [GitHub](https://github.com/mhalder/stau).
