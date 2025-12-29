@@ -107,11 +107,11 @@ mod tests {
     #[test]
     fn test_teardown_script_failed_error() {
         let err = StauError::TeardownScriptFailed {
-            package: "zsh".to_string(),
+            package: "vim".to_string(),
             message: "script exited with code 2".to_string(),
         };
         assert_eq!(err.exit_code(), 4);
-        assert!(err.to_string().contains("zsh"));
+        assert!(err.to_string().contains("vim"));
         assert!(err.to_string().contains("script exited with code 2"));
         assert!(err.to_string().contains("--no-teardown"));
     }

@@ -212,16 +212,16 @@ mod tests {
         let stau_dir = temp_dir.path();
 
         // Create some package directories
-        fs::create_dir(stau_dir.join("zsh")).unwrap();
         fs::create_dir(stau_dir.join("vim")).unwrap();
+        fs::create_dir(stau_dir.join("tmux")).unwrap();
         fs::create_dir(stau_dir.join("git")).unwrap();
         fs::create_dir(stau_dir.join(".hidden")).unwrap();
 
         let packages = list_packages(stau_dir).unwrap();
 
         assert_eq!(packages.len(), 3);
-        assert!(packages.contains(&"zsh".to_string()));
         assert!(packages.contains(&"vim".to_string()));
+        assert!(packages.contains(&"tmux".to_string()));
         assert!(packages.contains(&"git".to_string()));
         assert!(!packages.contains(&".hidden".to_string()));
     }

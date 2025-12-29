@@ -96,10 +96,10 @@ fn test_install_with_setup_script() {
     fs::create_dir(&target_dir).unwrap();
 
     // Create package with setup script
-    let package_dir = stau_dir.join("zsh");
+    let package_dir = stau_dir.join("vim");
     fs::create_dir(&package_dir).unwrap();
 
-    create_test_package(&stau_dir, "zsh", &[".zshrc"]);
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
 
     let marker_file = target_dir.join("setup-ran");
     let setup_script = package_dir.join("setup.sh");
@@ -112,7 +112,7 @@ fn test_install_with_setup_script() {
     let output = Command::new(stau_binary())
         .env("STAU_DIR", &stau_dir)
         .env("STAU_TARGET", &target_dir)
-        .args(["install", "zsh"])
+        .args(["install", "vim"])
         .output()
         .unwrap();
 
@@ -122,7 +122,7 @@ fn test_install_with_setup_script() {
         output
     );
     assert!(marker_file.exists(), "Setup script didn't run");
-    assert!(target_dir.join(".zshrc").is_symlink());
+    assert!(target_dir.join(".vimrc").is_symlink());
 }
 
 #[test]
@@ -134,10 +134,10 @@ fn test_install_no_setup_flag() {
     fs::create_dir(&stau_dir).unwrap();
     fs::create_dir(&target_dir).unwrap();
 
-    let package_dir = stau_dir.join("zsh");
+    let package_dir = stau_dir.join("vim");
     fs::create_dir(&package_dir).unwrap();
 
-    create_test_package(&stau_dir, "zsh", &[".zshrc"]);
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
 
     let marker_file = target_dir.join("setup-ran");
     let setup_script = package_dir.join("setup.sh");
@@ -150,7 +150,7 @@ fn test_install_no_setup_flag() {
     let output = Command::new(stau_binary())
         .env("STAU_DIR", &stau_dir)
         .env("STAU_TARGET", &target_dir)
-        .args(["install", "zsh", "--no-setup"])
+        .args(["install", "vim", "--no-setup"])
         .output()
         .unwrap();
 
@@ -456,10 +456,10 @@ fn test_uninstall_with_teardown_script() {
     fs::create_dir(&target_dir).unwrap();
 
     // Create package with teardown script
-    let package_dir = stau_dir.join("zsh");
+    let package_dir = stau_dir.join("vim");
     fs::create_dir(&package_dir).unwrap();
 
-    create_test_package(&stau_dir, "zsh", &[".zshrc"]);
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
 
     let marker_file = target_dir.join("teardown-ran");
     let teardown_script = package_dir.join("teardown.sh");
@@ -472,7 +472,7 @@ fn test_uninstall_with_teardown_script() {
     let _ = Command::new(stau_binary())
         .env("STAU_DIR", &stau_dir)
         .env("STAU_TARGET", &target_dir)
-        .args(["install", "zsh", "--no-setup"])
+        .args(["install", "vim", "--no-setup"])
         .output()
         .unwrap();
 
@@ -480,7 +480,7 @@ fn test_uninstall_with_teardown_script() {
     let output = Command::new(stau_binary())
         .env("STAU_DIR", &stau_dir)
         .env("STAU_TARGET", &target_dir)
-        .args(["uninstall", "zsh"])
+        .args(["uninstall", "vim"])
         .output()
         .unwrap();
 
@@ -502,10 +502,10 @@ fn test_uninstall_no_teardown_flag() {
     fs::create_dir(&target_dir).unwrap();
 
     // Create package with teardown script
-    let package_dir = stau_dir.join("zsh");
+    let package_dir = stau_dir.join("vim");
     fs::create_dir(&package_dir).unwrap();
 
-    create_test_package(&stau_dir, "zsh", &[".zshrc"]);
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
 
     let marker_file = target_dir.join("teardown-ran");
     let teardown_script = package_dir.join("teardown.sh");
@@ -518,7 +518,7 @@ fn test_uninstall_no_teardown_flag() {
     let _ = Command::new(stau_binary())
         .env("STAU_DIR", &stau_dir)
         .env("STAU_TARGET", &target_dir)
-        .args(["install", "zsh", "--no-setup"])
+        .args(["install", "vim", "--no-setup"])
         .output()
         .unwrap();
 
@@ -526,7 +526,7 @@ fn test_uninstall_no_teardown_flag() {
     let output = Command::new(stau_binary())
         .env("STAU_DIR", &stau_dir)
         .env("STAU_TARGET", &target_dir)
-        .args(["uninstall", "zsh", "--no-teardown"])
+        .args(["uninstall", "vim", "--no-teardown"])
         .output()
         .unwrap();
 
@@ -617,9 +617,9 @@ fn test_adopt_multiple_files() {
 
     // Create files in target directory
     let bashrc = target_dir.join(".bashrc");
-    let zshrc = target_dir.join(".zshrc");
+    let vimrc = target_dir.join(".vimrc");
     fs::write(&bashrc, "echo 'bash'").unwrap();
-    fs::write(&zshrc, "echo 'zsh'").unwrap();
+    fs::write(&vimrc, "echo 'vim'").unwrap();
 
     // Adopt multiple files
     let output = Command::new(stau_binary())
@@ -629,16 +629,16 @@ fn test_adopt_multiple_files() {
             "adopt",
             "shell",
             bashrc.to_str().unwrap(),
-            zshrc.to_str().unwrap(),
+            vimrc.to_str().unwrap(),
         ])
         .output()
         .unwrap();
 
     assert!(output.status.success(), "Adopt failed: {:?}", output);
     assert!(bashrc.is_symlink(), ".bashrc should be a symlink");
-    assert!(zshrc.is_symlink(), ".zshrc should be a symlink");
+    assert!(vimrc.is_symlink(), ".vimrc should be a symlink");
     assert!(stau_dir.join("shell/.bashrc").exists());
-    assert!(stau_dir.join("shell/.zshrc").exists());
+    assert!(stau_dir.join("shell/.vimrc").exists());
 }
 
 #[test]
