@@ -148,13 +148,27 @@ fn run(cli: Cli) -> Result<()> {
             package,
             target,
             no_setup,
-        } => install_package(&config, &package, target, no_setup, cli.dry_run, cli.verbose),
+        } => install_package(
+            &config,
+            &package,
+            target,
+            no_setup,
+            cli.dry_run,
+            cli.verbose,
+        ),
 
         Commands::Uninstall {
             package,
             target,
             no_teardown,
-        } => uninstall_package(&config, &package, target, no_teardown, cli.dry_run, cli.verbose),
+        } => uninstall_package(
+            &config,
+            &package,
+            target,
+            no_teardown,
+            cli.dry_run,
+            cli.verbose,
+        ),
 
         Commands::Restow {
             package,
@@ -171,7 +185,14 @@ fn run(cli: Cli) -> Result<()> {
             uninstall_package_internal(&config, &package, target.clone(), opts)?;
 
             // Then install (with setup if requested)
-            install_package(&config, &package, target, !run_setup, cli.dry_run, cli.verbose)
+            install_package(
+                &config,
+                &package,
+                target,
+                !run_setup,
+                cli.dry_run,
+                cli.verbose,
+            )
         }
 
         Commands::Adopt {
