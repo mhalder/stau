@@ -1,8 +1,15 @@
-use crate::error::{Result, StauError};
+use crate::error::{map_io_error, Result, StauError};
 use std::path::Path;
 use std::process::Command;
 
-/// Execute a setup or teardown script
+/// Executes a setup or teardown script for a package.
+///
+/// The script is run with the following environment variables set:
+/// - `STAU_DIR`: Path to the dotfiles directory
+/// - `STAU_PACKAGE`: Name of the package being installed/uninstalled
+/// - `STAU_TARGET`: Target directory where symlinks are created
+///
+/// Returns an error if the script fails (non-zero exit code) or cannot be executed.
 pub fn execute_script(
     script_path: &Path,
     package_name: &str,
@@ -29,14 +36,13 @@ pub fn execute_script(
         .env("STAU_TARGET", target_dir)
         .output()
         .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::PermissionDenied {
-                StauError::PermissionDenied(format!(
+            map_io_error(
+                e,
+                format!(
                     "Cannot execute script: {}. Make sure it's executable (chmod +x)",
                     script_path.display()
-                ))
-            } else {
-                StauError::Io(e)
-            }
+                ),
+            )
         })?;
 
     // Print stdout and stderr
@@ -94,10 +100,10 @@ mod tests {
         fs::set_permissions(path, perms).unwrap();
 
         // Sync directory to ensure metadata changes are persisted
-        if let Some(parent) = path.parent()
-            && let Ok(dir) = fs::File::open(parent)
-        {
-            let _ = dir.sync_all();
+        if let Some(parent) = path.parent() {
+            if let Ok(dir) = fs::File::open(parent) {
+                let _ = dir.sync_all();
+            }
         }
     }
 

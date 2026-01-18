@@ -12,7 +12,12 @@ pub struct Config {
 }
 
 impl Config {
-    /// Create a new Config by reading environment variables
+    /// Creates a new Config by reading environment variables and resolving default paths.
+    ///
+    /// STAU_DIR resolution priority:
+    /// 1. `$STAU_DIR` environment variable
+    /// 2. `~/.config/dotfiles` (XDG-compliant)
+    /// 3. `~/dotfiles` (legacy)
     pub fn new() -> Result<Self> {
         let stau_dir = Self::get_stau_dir()?;
         let default_target = Self::get_default_target()?;
@@ -75,22 +80,27 @@ impl Config {
             .map_err(|_| StauError::Other("Could not determine home directory".to_string()))
     }
 
-    /// Get the target directory, using provided override or default
+    /// Gets the target directory, using provided override or the default target.
+    ///
+    /// If an override is provided, it takes precedence over the default target
+    /// (which is `$STAU_TARGET` or `$HOME`).
     pub fn get_target(&self, override_target: Option<PathBuf>) -> PathBuf {
         override_target.unwrap_or_else(|| self.default_target.clone())
     }
 
-    /// Get the package directory path
+    /// Gets the full path to a package directory within STAU_DIR.
     pub fn get_package_dir(&self, package: &str) -> PathBuf {
         self.stau_dir.join(package)
     }
 
-    /// Check if a package exists
+    /// Checks if a package exists (i.e., its directory exists in STAU_DIR).
     pub fn package_exists(&self, package: &str) -> bool {
         self.get_package_dir(package).exists()
     }
 
-    /// Get the setup script path for a package
+    /// Gets the setup script path for a package, if it exists.
+    ///
+    /// Returns `Some(path)` if `<package>/setup.sh` exists and is a file, `None` otherwise.
     pub fn get_setup_script(&self, package: &str) -> Option<PathBuf> {
         let script_path = self.get_package_dir(package).join("setup.sh");
         if script_path.exists() && script_path.is_file() {
@@ -100,7 +110,9 @@ impl Config {
         }
     }
 
-    /// Get the teardown script path for a package
+    /// Gets the teardown script path for a package, if it exists.
+    ///
+    /// Returns `Some(path)` if `<package>/teardown.sh` exists and is a file, `None` otherwise.
     pub fn get_teardown_script(&self, package: &str) -> Option<PathBuf> {
         let script_path = self.get_package_dir(package).join("teardown.sh");
         if script_path.exists() && script_path.is_file() {

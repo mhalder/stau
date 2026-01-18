@@ -41,10 +41,10 @@ fn create_script(path: &std::path::Path, content: &str) {
     fs::set_permissions(path, perms).unwrap();
 
     // Sync directory
-    if let Some(parent) = path.parent()
-        && let Ok(dir) = fs::File::open(parent)
-    {
-        let _ = dir.sync_all();
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
     }
 }
 
