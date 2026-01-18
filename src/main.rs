@@ -9,7 +9,7 @@ mod script;
 mod symlink;
 
 use config::Config;
-use error::Result;
+use error::{map_io_error, Result};
 
 #[derive(Parser)]
 #[command(name = "stau")]
@@ -211,6 +211,9 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
+/// Installs a package by creating symlinks from the package directory to the target directory.
+///
+/// If a setup script exists and `no_setup` is false, it will be executed after creating symlinks.
 fn install_package(
     config: &Config,
     package: &str,
@@ -266,35 +269,46 @@ fn install_package(
     }
 
     // Run setup script if it exists and not skipped
-    if !no_setup && let Some(setup_script) = config.get_setup_script(package) {
-        if verbose {
-            println!("Found setup script: {}", setup_script.display());
-        }
+    if !no_setup {
+        if let Some(setup_script) = config.get_setup_script(package) {
+            if verbose {
+                println!("Found setup script: {}", setup_script.display());
+            }
 
-        script::execute_script(
-            &setup_script,
-            package,
-            &config.stau_dir,
-            &target_dir,
-            dry_run,
-            verbose,
-        )?;
+            script::execute_script(
+                &setup_script,
+                package,
+                &config.stau_dir,
+                &target_dir,
+                dry_run,
+                verbose,
+            )?;
 
-        if !dry_run {
-            println!("Setup script completed successfully");
+            if !dry_run {
+                println!("Setup script completed successfully");
+            }
         }
     }
 
     Ok(())
 }
 
+/// Options for uninstall operations.
 struct UninstallOptions {
+    /// Skip running the teardown script
     no_teardown: bool,
+    /// Copy files back from package to target after removing symlinks
     copy_files_back: bool,
+    /// Dry run mode - don't make actual changes
     dry_run: bool,
+    /// Verbose output
     verbose: bool,
 }
 
+/// Uninstalls a package by removing symlinks and optionally copying files back.
+///
+/// If a teardown script exists and `no_teardown` is false, it will be executed first.
+/// Teardown script failures are logged but don't stop the uninstall process.
 fn uninstall_package(
     config: &Config,
     package: &str,
@@ -312,6 +326,7 @@ fn uninstall_package(
     uninstall_package_internal(config, package, target, opts)
 }
 
+/// Internal implementation of package uninstallation with configurable options.
 fn uninstall_package_internal(
     config: &Config,
     package: &str,
@@ -332,26 +347,26 @@ fn uninstall_package_internal(
     }
 
     // Run teardown script first if it exists and not skipped
-    if !opts.no_teardown
-        && let Some(teardown_script) = config.get_teardown_script(package)
-    {
-        if opts.verbose {
-            println!("Found teardown script: {}", teardown_script.display());
-        }
+    if !opts.no_teardown {
+        if let Some(teardown_script) = config.get_teardown_script(package) {
+            if opts.verbose {
+                println!("Found teardown script: {}", teardown_script.display());
+            }
 
-        // Note: PRD says teardown should continue even if it fails
-        if let Err(e) = script::execute_script(
-            &teardown_script,
-            package,
-            &config.stau_dir,
-            &target_dir,
-            opts.dry_run,
-            opts.verbose,
-        ) {
-            eprintln!("Warning: Teardown script failed: {}", e);
-            eprintln!("Continuing with uninstall...");
-        } else if !opts.dry_run {
-            println!("Teardown script completed successfully");
+            // Note: PRD says teardown should continue even if it fails
+            if let Err(e) = script::execute_script(
+                &teardown_script,
+                package,
+                &config.stau_dir,
+                &target_dir,
+                opts.dry_run,
+                opts.verbose,
+            ) {
+                eprintln!("Warning: Teardown script failed: {}", e);
+                eprintln!("Continuing with uninstall...");
+            } else if !opts.dry_run {
+                println!("Teardown script completed successfully");
+            }
         }
     }
 
@@ -389,6 +404,8 @@ fn uninstall_package_internal(
                 // wasn't actually removed yet
                 if !opts.dry_run && mapping.target.exists() {
                     return Err(error::StauError::ConflictingFile(mapping.target.clone()));
+                } else if opts.dry_run && opts.verbose {
+                    println!("    (conflict check skipped in dry-run)");
                 }
 
                 symlink::copy_file(&mapping.source, &mapping.target, opts.dry_run)?;
@@ -419,6 +436,7 @@ fn uninstall_package_internal(
     Ok(())
 }
 
+/// Lists all packages in STAU_DIR and their installation status.
 fn list_packages(config: &Config, target: Option<PathBuf>) -> Result<()> {
     let target_dir = config.get_target(target);
     let packages = package::list_packages(&config.stau_dir)?;
@@ -446,9 +464,10 @@ fn list_packages(config: &Config, target: Option<PathBuf>) -> Result<()> {
                     for mapping in &mappings {
                         if let Ok(is_our_link) =
                             symlink::is_stau_symlink(&mapping.target, &mapping.source)
-                            && is_our_link
                         {
-                            installed_count += 1;
+                            if is_our_link {
+                                installed_count += 1;
+                            }
                         }
 
                         if symlink::is_broken_symlink(&mapping.target) {
@@ -480,8 +499,8 @@ fn list_packages(config: &Config, target: Option<PathBuf>) -> Result<()> {
                     }
                 }
             }
-            Err(_) => {
-                println!("  {:<20} [error reading package]", pkg);
+            Err(e) => {
+                println!("  {:<20} [error: {}]", pkg, e);
             }
         }
     }
@@ -489,6 +508,7 @@ fn list_packages(config: &Config, target: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// Adopts existing files into a package by moving them to the package directory and creating symlinks.
 fn adopt_files(
     config: &Config,
     package: &str,
@@ -509,14 +529,10 @@ fn adopt_files(
         }
         if !dry_run {
             fs::create_dir_all(&package_dir).map_err(|e| {
-                if e.kind() == std::io::ErrorKind::PermissionDenied {
-                    error::StauError::PermissionDenied(format!(
-                        "Cannot create package directory: {}",
-                        package_dir.display()
-                    ))
-                } else {
-                    error::StauError::Io(e)
-                }
+                map_io_error(
+                    e,
+                    format!("Cannot create package directory: {}", package_dir.display()),
+                )
             })?;
         }
     }
@@ -584,6 +600,7 @@ fn adopt_files(
     Ok(())
 }
 
+/// Shows detailed status for a specific package including symlink states and script availability.
 fn show_status(config: &Config, package: &str, target: Option<PathBuf>) -> Result<()> {
     let target_dir = config.get_target(target);
     let package_dir = config.get_package_dir(package);
@@ -653,6 +670,7 @@ fn show_status(config: &Config, package: &str, target: Option<PathBuf>) -> Resul
     Ok(())
 }
 
+/// Removes broken symlinks for a package.
 fn clean_broken_symlinks(
     config: &Config,
     package: &str,
@@ -680,14 +698,10 @@ fn clean_broken_symlinks(
 
             if !dry_run {
                 fs::remove_file(&mapping.target).map_err(|e| {
-                    if e.kind() == std::io::ErrorKind::PermissionDenied {
-                        error::StauError::PermissionDenied(format!(
-                            "Cannot remove symlink: {}",
-                            mapping.target.display()
-                        ))
-                    } else {
-                        error::StauError::Io(e)
-                    }
+                    map_io_error(
+                        e,
+                        format!("Cannot remove symlink: {}", mapping.target.display()),
+                    )
                 })?;
             }
 

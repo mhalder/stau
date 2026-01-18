@@ -1,9 +1,13 @@
-use crate::error::{Result, StauError};
+use crate::error::{map_io_error, Result, StauError};
 use crate::symlink::SymlinkMapping;
 use std::fs;
 use std::path::Path;
 
-/// Walk a package directory and generate symlink mappings
+/// Walks a package directory and generates symlink mappings for all files.
+///
+/// Returns a list of `SymlinkMapping` structs representing the source files in the package
+/// and their corresponding target locations. Setup/teardown scripts and version control
+/// files at the package root are excluded.
 pub fn discover_package_files(
     package_dir: &Path,
     target_dir: &Path,
@@ -31,11 +35,10 @@ fn walk_directory(
     mappings: &mut Vec<SymlinkMapping>,
 ) -> Result<()> {
     let entries = fs::read_dir(current_dir).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::PermissionDenied {
-            StauError::PermissionDenied(format!("Cannot read directory: {}", current_dir.display()))
-        } else {
-            StauError::Io(e)
-        }
+        map_io_error(
+            e,
+            format!("Cannot read directory: {}", current_dir.display()),
+        )
     })?;
 
     for entry in entries {
@@ -81,19 +84,17 @@ fn walk_directory(
     Ok(())
 }
 
-/// List all packages in the stau directory
+/// Lists all packages in the stau directory.
+///
+/// Returns a sorted list of package names (directory names) in STAU_DIR.
+/// Hidden directories (starting with `.`) are excluded.
 pub fn list_packages(stau_dir: &Path) -> Result<Vec<String>> {
     if !stau_dir.exists() {
         return Err(StauError::StauDirNotFound(stau_dir.to_path_buf()));
     }
 
-    let entries = fs::read_dir(stau_dir).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::PermissionDenied {
-            StauError::PermissionDenied(format!("Cannot read directory: {}", stau_dir.display()))
-        } else {
-            StauError::Io(e)
-        }
-    })?;
+    let entries = fs::read_dir(stau_dir)
+        .map_err(|e| map_io_error(e, format!("Cannot read directory: {}", stau_dir.display())))?;
 
     let mut packages = Vec::new();
     for entry in entries {
@@ -101,12 +102,12 @@ pub fn list_packages(stau_dir: &Path) -> Result<Vec<String>> {
         let path = entry.path();
 
         // Only include directories, skip hidden directories
-        if path.is_dir()
-            && let Some(name) = path.file_name()
-        {
-            let name_str = name.to_string_lossy();
-            if !name_str.starts_with('.') {
-                packages.push(name_str.to_string());
+        if path.is_dir() {
+            if let Some(name) = path.file_name() {
+                let name_str = name.to_string_lossy();
+                if !name_str.starts_with('.') {
+                    packages.push(name_str.to_string());
+                }
             }
         }
     }
@@ -135,16 +136,12 @@ mod tests {
         let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
 
         assert_eq!(mappings.len(), 2);
-        assert!(
-            mappings
-                .iter()
-                .any(|m| m.source.ends_with(".bashrc") && m.target.ends_with(".bashrc"))
-        );
-        assert!(
-            mappings
-                .iter()
-                .any(|m| m.source.ends_with(".vimrc") && m.target.ends_with(".vimrc"))
-        );
+        assert!(mappings
+            .iter()
+            .any(|m| m.source.ends_with(".bashrc") && m.target.ends_with(".bashrc")));
+        assert!(mappings
+            .iter()
+            .any(|m| m.source.ends_with(".vimrc") && m.target.ends_with(".vimrc")));
     }
 
     #[test]

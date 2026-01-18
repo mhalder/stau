@@ -47,6 +47,7 @@ pub enum StauError {
 }
 
 impl StauError {
+    /// Returns the appropriate exit code for this error type.
     pub fn exit_code(&self) -> i32 {
         match self {
             StauError::PackageNotFound(_) => 1,
@@ -59,6 +60,17 @@ impl StauError {
             StauError::Io(_) => 3,
             StauError::Other(_) => 1,
         }
+    }
+}
+
+/// Maps an IO error to StauError, converting PermissionDenied to StauError::PermissionDenied.
+///
+/// This helper reduces duplication when mapping IO errors throughout the codebase.
+pub fn map_io_error(e: std::io::Error, context: impl Into<String>) -> StauError {
+    if e.kind() == std::io::ErrorKind::PermissionDenied {
+        StauError::PermissionDenied(context.into())
+    } else {
+        StauError::Io(e)
     }
 }
 
@@ -153,5 +165,20 @@ mod tests {
         let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
         let stau_err: StauError = io_err.into();
         assert_eq!(stau_err.exit_code(), 3);
+    }
+
+    #[test]
+    fn test_map_io_error_permission_denied() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+        let stau_err = map_io_error(io_err, "Cannot write file");
+        assert!(matches!(stau_err, StauError::PermissionDenied(_)));
+        assert!(stau_err.to_string().contains("Cannot write file"));
+    }
+
+    #[test]
+    fn test_map_io_error_other() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let stau_err = map_io_error(io_err, "Cannot write file");
+        assert!(matches!(stau_err, StauError::Io(_)));
     }
 }
