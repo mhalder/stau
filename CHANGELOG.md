@@ -1,3 +1,13 @@
+## [2.0.1](https://github.com/mhalder/stau/compare/v2.0.0...v2.0.1) (2026-01-18)
+
+### Bug Fixes
+
+* correct Rust edition and clean up codebase ([90afa52](https://github.com/mhalder/stau/commit/90afa52833f17bc51186f09df291094a4176afaf))
+
+### Documentation
+
+* replace zsh examples with ghostty ([#12](https://github.com/mhalder/stau/issues/12)) ([3a8a9f8](https://github.com/mhalder/stau/commit/3a8a9f89fc5bf00f472add7d08affe79f9611945)), closes [#11](https://github.com/mhalder/stau/issues/11)
+
 ## [2.0.0](https://github.com/mhalder/stau/compare/v1.1.0...v2.0.0) (2025-12-29)
 
 ### ⚠ BREAKING CHANGES
