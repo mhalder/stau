@@ -21,7 +21,7 @@ Traditional tools like GNU Stow excel at symlink management but lack automation 
 - **Broken Symlink Cleanup**: Clean up stale symlinks with the `clean` command
 - **Command Aliases**: Short aliases for common commands (`i`, `u`, `s`, `l`, etc.)
 - **XDG Compliant**: Supports `~/.config/dotfiles` (preferred) and `~/dotfiles` (fallback)
-- **Cross-Platform**: Written in Rust with proper home directory detection on Linux, macOS, and Windows
+- **Linux Native**: Written in Rust for Linux with proper home directory and XDG detection
 
 ## Installation
 
@@ -42,7 +42,7 @@ cargo build --release
 
 ### Pre-built binaries
 
-Download pre-built binaries for Linux, macOS (Intel/Apple Silicon), and Windows from the [releases page](https://github.com/mhalder/stau/releases).
+Download pre-built binaries for Linux x86_64 from the [releases page](https://github.com/mhalder/stau/releases).
 
 ## Quick Start
 

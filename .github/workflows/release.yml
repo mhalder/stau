@@ -102,15 +102,6 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             name: stau-linux-x86_64
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            name: stau-macos-x86_64
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            name: stau-macos-aarch64
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            name: stau-windows-x86_64.exe
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -126,33 +117,17 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Strip binary (Linux and macOS)
-        if: matrix.os != 'windows-latest'
+      - name: Strip binary
         run: strip target/${{ matrix.target }}/release/stau
 
-      - name: Prepare binary (Linux and macOS)
-        if: matrix.os != 'windows-latest'
+      - name: Prepare binary
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ${{ matrix.name }}.tar.gz stau
           mv ${{ matrix.name }}.tar.gz ../../..
 
-      - name: Prepare binary (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          cd target/${{ matrix.target }}/release
-          7z a ../../../${{ matrix.name }}.zip stau.exe
-
-      - name: Upload to GitHub Release (Linux and macOS)
-        if: matrix.os != 'windows-latest'
+      - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ needs.release.outputs.new_release_version }}
           files: ${{ matrix.name }}.tar.gz
-
-      - name: Upload to GitHub Release (Windows)
-        if: matrix.os == 'windows-latest'
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ needs.release.outputs.new_release_version }}
-          files: ${{ matrix.name }}.zip
