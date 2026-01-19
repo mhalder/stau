@@ -65,6 +65,9 @@ stau adopt ghostty ~/.config/ghostty/config
 # Uninstall a package (removes symlinks, copies files back)
 stau uninstall ghostty
 
+# Uninstall all packages at once
+stau uninstall --all
+
 # Refresh symlinks for a package
 stau restow ghostty
 
@@ -114,12 +117,13 @@ stau install ghostty --verbose          # Show detailed output
 | `-n, --dry-run` | Show what would be done without making changes |
 | `-v, --verbose` | Show detailed output |
 
-### `stau uninstall <package>` (aliases: `u`, `rm`)
+### `stau uninstall [package]` (aliases: `u`, `rm`)
 
 Runs `teardown.sh` (if present), removes symlinks, and restores original files from the dotfiles repo. This "unadopts" the dotfiles, leaving you with standalone config files.
 
 ```bash
 stau uninstall ghostty                  # Basic uninstall
+stau uninstall --all                    # Uninstall all packages
 stau uninstall ghostty --no-teardown    # Skip teardown script
 stau uninstall ghostty --dry-run        # Preview without making changes
 ```
@@ -127,6 +131,7 @@ stau uninstall ghostty --dry-run        # Preview without making changes
 **Options:**
 | Flag | Description |
 |------|-------------|
+| `-a, --all` | Uninstall all packages in STAU_DIR |
 | `--no-teardown` | Skip running the teardown script |
 | `-t, --target <DIR>` | Target directory (default: `$HOME` or `$STAU_TARGET`) |
 | `-n, --dry-run` | Show what would be done without making changes |
