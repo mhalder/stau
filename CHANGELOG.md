@@ -1,3 +1,9 @@
+## [2.0.2](https://github.com/mhalder/stau/compare/v2.0.1...v2.0.2) (2026-01-19)
+
+### Bug Fixes
+
+* restore Rust 2024 edition and modernize with let chains ([12342ae](https://github.com/mhalder/stau/commit/12342ae73d3281a5f9a0ad76d5bcb52c608b5594)), closes [#14](https://github.com/mhalder/stau/issues/14) [#16](https://github.com/mhalder/stau/issues/16)
+
 ## [2.0.1](https://github.com/mhalder/stau/compare/v2.0.0...v2.0.1) (2026-01-18)
 
 ### Bug Fixes
