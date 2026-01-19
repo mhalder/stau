@@ -1,4 +1,4 @@
-use crate::error::{map_io_error, Result, StauError};
+use crate::error::{Result, StauError, map_io_error};
 use std::path::Path;
 use std::process::Command;
 

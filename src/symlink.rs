@@ -1,4 +1,4 @@
-use crate::error::{map_io_error, Result, StauError};
+use crate::error::{Result, StauError, map_io_error};
 use std::fs;
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
@@ -48,11 +48,10 @@ pub fn is_stau_symlink(path: &Path, expected_target: &Path) -> Result<bool> {
 /// Returns `true` if path is a symlink whose target doesn't exist,
 /// `false` otherwise (including when path doesn't exist or isn't a symlink).
 pub fn is_broken_symlink(path: &Path) -> bool {
-    if let Ok(metadata) = path.symlink_metadata() {
-        if metadata.is_symlink() {
-            // Check if the target exists
-            return !path.exists();
-        }
+    if let Ok(metadata) = path.symlink_metadata()
+        && metadata.is_symlink()
+    {
+        return !path.exists();
     }
     false
 }

@@ -1,4 +1,4 @@
-use crate::error::{map_io_error, Result, StauError};
+use crate::error::{Result, StauError, map_io_error};
 use crate::symlink::SymlinkMapping;
 use std::fs;
 use std::path::Path;
@@ -102,13 +102,11 @@ pub fn list_packages(stau_dir: &Path) -> Result<Vec<String>> {
         let path = entry.path();
 
         // Only include directories, skip hidden directories
-        if path.is_dir() {
-            if let Some(name) = path.file_name() {
-                let name_str = name.to_string_lossy();
-                if !name_str.starts_with('.') {
-                    packages.push(name_str.to_string());
-                }
-            }
+        if path.is_dir()
+            && let Some(name) = path.file_name()
+            && !name.to_string_lossy().starts_with('.')
+        {
+            packages.push(name.to_string_lossy().to_string());
         }
     }
 
@@ -136,12 +134,16 @@ mod tests {
         let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
 
         assert_eq!(mappings.len(), 2);
-        assert!(mappings
-            .iter()
-            .any(|m| m.source.ends_with(".bashrc") && m.target.ends_with(".bashrc")));
-        assert!(mappings
-            .iter()
-            .any(|m| m.source.ends_with(".vimrc") && m.target.ends_with(".vimrc")));
+        assert!(
+            mappings
+                .iter()
+                .any(|m| m.source.ends_with(".bashrc") && m.target.ends_with(".bashrc"))
+        );
+        assert!(
+            mappings
+                .iter()
+                .any(|m| m.source.ends_with(".vimrc") && m.target.ends_with(".vimrc"))
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ mod script;
 mod symlink;
 
 use config::Config;
-use error::{map_io_error, Result};
+use error::{Result, map_io_error};
 
 #[derive(Parser)]
 #[command(name = "stau")]
@@ -269,24 +269,22 @@ fn install_package(
     }
 
     // Run setup script if it exists and not skipped
-    if !no_setup {
-        if let Some(setup_script) = config.get_setup_script(package) {
-            if verbose {
-                println!("Found setup script: {}", setup_script.display());
-            }
+    if !no_setup && let Some(setup_script) = config.get_setup_script(package) {
+        if verbose {
+            println!("Found setup script: {}", setup_script.display());
+        }
 
-            script::execute_script(
-                &setup_script,
-                package,
-                &config.stau_dir,
-                &target_dir,
-                dry_run,
-                verbose,
-            )?;
+        script::execute_script(
+            &setup_script,
+            package,
+            &config.stau_dir,
+            &target_dir,
+            dry_run,
+            verbose,
+        )?;
 
-            if !dry_run {
-                println!("Setup script completed successfully");
-            }
+        if !dry_run {
+            println!("Setup script completed successfully");
         }
     }
 
@@ -347,26 +345,26 @@ fn uninstall_package_internal(
     }
 
     // Run teardown script first if it exists and not skipped
-    if !opts.no_teardown {
-        if let Some(teardown_script) = config.get_teardown_script(package) {
-            if opts.verbose {
-                println!("Found teardown script: {}", teardown_script.display());
-            }
+    if !opts.no_teardown
+        && let Some(teardown_script) = config.get_teardown_script(package)
+    {
+        if opts.verbose {
+            println!("Found teardown script: {}", teardown_script.display());
+        }
 
-            // Note: PRD says teardown should continue even if it fails
-            if let Err(e) = script::execute_script(
-                &teardown_script,
-                package,
-                &config.stau_dir,
-                &target_dir,
-                opts.dry_run,
-                opts.verbose,
-            ) {
-                eprintln!("Warning: Teardown script failed: {}", e);
-                eprintln!("Continuing with uninstall...");
-            } else if !opts.dry_run {
-                println!("Teardown script completed successfully");
-            }
+        // Note: PRD says teardown should continue even if it fails
+        if let Err(e) = script::execute_script(
+            &teardown_script,
+            package,
+            &config.stau_dir,
+            &target_dir,
+            opts.dry_run,
+            opts.verbose,
+        ) {
+            eprintln!("Warning: Teardown script failed: {}", e);
+            eprintln!("Continuing with uninstall...");
+        } else if !opts.dry_run {
+            println!("Teardown script completed successfully");
         }
     }
 
@@ -462,12 +460,9 @@ fn list_packages(config: &Config, target: Option<PathBuf>) -> Result<()> {
                     let mut broken_count = 0;
 
                     for mapping in &mappings {
-                        if let Ok(is_our_link) =
-                            symlink::is_stau_symlink(&mapping.target, &mapping.source)
+                        if let Ok(true) = symlink::is_stau_symlink(&mapping.target, &mapping.source)
                         {
-                            if is_our_link {
-                                installed_count += 1;
-                            }
+                            installed_count += 1;
                         }
 
                         if symlink::is_broken_symlink(&mapping.target) {
