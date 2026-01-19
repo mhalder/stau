@@ -50,6 +50,9 @@ Download pre-built binaries for Linux x86_64 from the [releases page](https://gi
 # Install a package (creates symlinks + runs setup script)
 stau install ghostty
 
+# Install all packages at once
+stau install --all
+
 # List all packages and their status
 stau list
 
@@ -89,12 +92,13 @@ Organize your dotfiles in a directory structure where each subdirectory is a "pa
 
 ## Commands
 
-### `stau install <package>` (aliases: `i`, `add`)
+### `stau install [package]` (aliases: `i`, `add`)
 
 Creates symlinks from your dotfiles package to the target directory and runs the package's `setup.sh` script if present.
 
 ```bash
 stau install ghostty                    # Basic install
+stau install --all                      # Install all packages
 stau install ghostty --no-setup         # Skip setup script
 stau install ghostty --target /tmp/test # Install to custom directory
 stau install ghostty --dry-run          # Preview without making changes
@@ -104,6 +108,7 @@ stau install ghostty --verbose          # Show detailed output
 **Options:**
 | Flag | Description |
 |------|-------------|
+| `-a, --all` | Install all packages in STAU_DIR |
 | `--no-setup` | Skip running the setup script |
 | `-t, --target <DIR>` | Target directory (default: `$HOME` or `$STAU_TARGET`) |
 | `-n, --dry-run` | Show what would be done without making changes |
@@ -369,7 +374,10 @@ stau automatically ignores these files in package directories:
 # Clone your dotfiles
 git clone https://github.com/username/dotfiles ~/dotfiles
 
-# Install packages
+# Install all packages at once
+stau install --all
+
+# Or install individual packages
 stau install ghostty
 stau install git
 stau install tmux
