@@ -44,6 +44,9 @@ pub enum StauError {
 
     #[error("{0}")]
     Other(String),
+
+    #[error("Invalid arguments: {0}")]
+    InvalidArguments(String),
 }
 
 impl StauError {
@@ -59,6 +62,7 @@ impl StauError {
             StauError::InvalidPath(_) => 1,
             StauError::Io(_) => 3,
             StauError::Other(_) => 1,
+            StauError::InvalidArguments(_) => 1,
         }
     }
 }

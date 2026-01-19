@@ -35,8 +35,12 @@ enum Commands {
     /// Install a package by creating symlinks
     #[command(visible_alias = "i", visible_alias = "add")]
     Install {
-        /// Package name to install
-        package: String,
+        /// Package name to install (required unless --all is specified)
+        package: Option<String>,
+
+        /// Install all packages
+        #[arg(short, long)]
+        all: bool,
 
         /// Target directory (default: $HOME or $STAU_TARGET)
         #[arg(short, long, env = "STAU_TARGET")]
@@ -150,16 +154,34 @@ fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Install {
             package,
+            all,
             target,
             no_setup,
-        } => install_package(
-            &config,
-            &package,
-            target,
-            no_setup,
-            cli.dry_run,
-            cli.verbose,
-        ),
+        } => {
+            if all && package.is_some() {
+                return Err(error::StauError::InvalidArguments(
+                    "Cannot specify both --all and a package name".to_string(),
+                ));
+            }
+            if !all && package.is_none() {
+                return Err(error::StauError::InvalidArguments(
+                    "Must specify either a package name or --all".to_string(),
+                ));
+            }
+
+            if all {
+                install_all_packages(&config, target, no_setup, cli.dry_run, cli.verbose)
+            } else {
+                install_package(
+                    &config,
+                    package.as_ref().unwrap(),
+                    target,
+                    no_setup,
+                    cli.dry_run,
+                    cli.verbose,
+                )
+            }
+        }
 
         Commands::Uninstall {
             package,
@@ -291,6 +313,63 @@ fn install_package(
         if !dry_run {
             println!("Setup script completed successfully");
         }
+    }
+
+    Ok(())
+}
+
+/// Installs all packages found in STAU_DIR.
+///
+/// For each package, symlinks are created and setup scripts are run (unless skipped).
+/// If any package fails to install, the error is reported but installation continues
+/// for remaining packages.
+fn install_all_packages(
+    config: &Config,
+    target: Option<PathBuf>,
+    no_setup: bool,
+    dry_run: bool,
+    verbose: bool,
+) -> Result<()> {
+    let packages = package::list_packages(&config.stau_dir)?;
+
+    if packages.is_empty() {
+        println!("No packages found in {}", config.stau_dir.display());
+        return Ok(());
+    }
+
+    println!("Installing {} packages...\n", packages.len());
+
+    let mut success_count = 0;
+    let mut error_count = 0;
+
+    for pkg in &packages {
+        if verbose {
+            println!("--- Installing package: {} ---", pkg);
+        }
+
+        match install_package(config, pkg, target.clone(), no_setup, dry_run, verbose) {
+            Ok(()) => {
+                success_count += 1;
+            }
+            Err(e) => {
+                eprintln!("Failed to install '{}': {}", pkg, e);
+                error_count += 1;
+            }
+        }
+
+        if verbose {
+            println!();
+        }
+    }
+
+    println!();
+    if error_count == 0 {
+        println!("Successfully installed all {} packages", success_count);
+    } else {
+        println!(
+            "Installed {} packages, {} failed",
+            success_count, error_count
+        );
     }
 
     Ok(())
