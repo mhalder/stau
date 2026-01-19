@@ -72,9 +72,13 @@ enum Commands {
         #[arg(short, long, env = "STAU_TARGET")]
         target: Option<PathBuf>,
 
-        /// Run setup script during restow
+        /// Skip running setup script
         #[arg(long)]
-        run_setup: bool,
+        no_setup: bool,
+
+        /// Skip running teardown script
+        #[arg(long)]
+        no_teardown: bool,
     },
 
     /// Adopt existing files into a package
@@ -173,23 +177,24 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Restow {
             package,
             target,
-            run_setup,
+            no_setup,
+            no_teardown,
         } => {
-            // Uninstall first (without teardown, without copying files back)
+            // Uninstall first (without copying files back)
             let opts = UninstallOptions {
-                no_teardown: true,
+                no_teardown,
                 copy_files_back: false, // Don't copy for restow!
                 dry_run: cli.dry_run,
                 verbose: cli.verbose,
             };
             uninstall_package_internal(&config, &package, target.clone(), opts)?;
 
-            // Then install (with setup if requested)
+            // Then install
             install_package(
                 &config,
                 &package,
                 target,
-                !run_setup,
+                no_setup,
                 cli.dry_run,
                 cli.verbose,
             )

@@ -131,18 +131,20 @@ stau uninstall ghostty --dry-run        # Preview without making changes
 
 ### `stau restow <package>` (alias: `r`)
 
-Removes and recreates symlinks for a package. Useful after modifying the package structure or adding new files. Unlike `uninstall`, this does **not** copy files back or run teardown.
+Removes and recreates symlinks for a package. Useful after modifying the package structure or adding new files. Unlike `uninstall`, this does **not** copy files back. By default, both teardown and setup scripts run during restow.
 
 ```bash
-stau restow ghostty                     # Refresh symlinks
-stau restow ghostty --run-setup         # Also run setup script
+stau restow ghostty                     # Refresh symlinks (runs teardown + setup)
+stau restow ghostty --no-setup          # Skip setup script
+stau restow ghostty --no-teardown       # Skip teardown script
 stau restow ghostty --dry-run           # Preview changes
 ```
 
 **Options:**
 | Flag | Description |
 |------|-------------|
-| `--run-setup` | Run the setup script during restow |
+| `--no-setup` | Skip running the setup script |
+| `--no-teardown` | Skip running the teardown script |
 | `-t, --target <DIR>` | Target directory |
 | `-n, --dry-run` | Show what would be done without making changes |
 | `-v, --verbose` | Show detailed output |

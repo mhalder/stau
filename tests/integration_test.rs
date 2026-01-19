@@ -880,7 +880,7 @@ fn test_clean_with_dry_run() {
 }
 
 #[test]
-fn test_restow_with_run_setup() {
+fn test_restow_runs_setup_by_default() {
     let temp_dir = TempDir::new().unwrap();
     let stau_dir = temp_dir.path().join("dotfiles");
     let target_dir = temp_dir.path().join("home");
@@ -900,7 +900,7 @@ fn test_restow_with_run_setup() {
         &format!("#!/bin/bash\ntouch {}\n", marker_file.display()),
     );
 
-    // Install first
+    // Install first (without setup)
     let _ = Command::new(stau_binary())
         .env("STAU_DIR", &stau_dir)
         .env("STAU_TARGET", &target_dir)
@@ -908,16 +908,151 @@ fn test_restow_with_run_setup() {
         .output()
         .unwrap();
 
-    // Restow with run-setup
+    // Restow (setup runs by default now)
     let output = Command::new(stau_binary())
         .env("STAU_DIR", &stau_dir)
         .env("STAU_TARGET", &target_dir)
-        .args(["restow", "vim", "--run-setup"])
+        .args(["restow", "vim"])
         .output()
         .unwrap();
 
     assert!(output.status.success());
-    assert!(marker_file.exists(), "Setup script should have run");
+    assert!(
+        marker_file.exists(),
+        "Setup script should have run by default"
+    );
+}
+
+#[test]
+fn test_restow_no_setup_flag() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Create package with setup script
+    let package_dir = stau_dir.join("vim");
+    fs::create_dir(&package_dir).unwrap();
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    let marker_file = target_dir.join("setup-ran");
+    let setup_script = package_dir.join("setup.sh");
+    create_script(
+        &setup_script,
+        &format!("#!/bin/bash\ntouch {}\n", marker_file.display()),
+    );
+
+    // Install first (without setup)
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim", "--no-setup"])
+        .output()
+        .unwrap();
+
+    // Restow with --no-setup
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["restow", "vim", "--no-setup"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(
+        !marker_file.exists(),
+        "Setup script should NOT have run with --no-setup"
+    );
+}
+
+#[test]
+fn test_restow_runs_teardown_by_default() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Create package with teardown script
+    let package_dir = stau_dir.join("vim");
+    fs::create_dir(&package_dir).unwrap();
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    let marker_file = target_dir.join("teardown-ran");
+    let teardown_script = package_dir.join("teardown.sh");
+    create_script(
+        &teardown_script,
+        &format!("#!/bin/bash\ntouch {}\n", marker_file.display()),
+    );
+
+    // Install first (without setup)
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim", "--no-setup"])
+        .output()
+        .unwrap();
+
+    // Restow (teardown runs by default now)
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["restow", "vim", "--no-setup"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(
+        marker_file.exists(),
+        "Teardown script should have run by default"
+    );
+}
+
+#[test]
+fn test_restow_no_teardown_flag() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Create package with teardown script
+    let package_dir = stau_dir.join("vim");
+    fs::create_dir(&package_dir).unwrap();
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    let marker_file = target_dir.join("teardown-ran");
+    let teardown_script = package_dir.join("teardown.sh");
+    create_script(
+        &teardown_script,
+        &format!("#!/bin/bash\ntouch {}\n", marker_file.display()),
+    );
+
+    // Install first (without setup)
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim", "--no-setup"])
+        .output()
+        .unwrap();
+
+    // Restow with --no-teardown
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["restow", "vim", "--no-teardown", "--no-setup"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(
+        !marker_file.exists(),
+        "Teardown script should NOT have run with --no-teardown"
+    );
 }
 
 #[test]
