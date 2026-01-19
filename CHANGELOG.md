@@ -1,3 +1,18 @@
+## [3.0.0](https://github.com/mhalder/stau/compare/v2.0.2...v3.0.0) (2026-01-19)
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** restow now runs both teardown and setup scripts by
+default. Use --no-setup and/or --no-teardown to skip scripts.
+
+Migration:
+- Old: stau restow pkg → New: stau restow pkg --no-setup --no-teardown
+- Old: stau restow pkg --run-setup → New: stau restow pkg
+
+### Bug Fixes
+
+* **cli:** standardize restow flags to match install/uninstall pattern ([078bd86](https://github.com/mhalder/stau/commit/078bd86f6dca506fb09b76512495c31269f52833))
+
 ## [2.0.2](https://github.com/mhalder/stau/compare/v2.0.1...v2.0.2) (2026-01-19)
 
 ### Bug Fixes
