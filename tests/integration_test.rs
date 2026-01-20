@@ -1551,3 +1551,550 @@ fn test_adopt_dry_run() {
     // Package directory should not be created
     assert!(!stau_dir.join("bash").exists());
 }
+
+// =============================================================================
+// Tests for install --all
+// =============================================================================
+
+#[test]
+fn test_install_all_packages() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Create multiple packages
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+    create_test_package(&stau_dir, "git", &[".gitconfig"]);
+    create_test_package(&stau_dir, "bash", &[".bashrc"]);
+
+    // Install all packages
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "--all"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Install --all failed: {:?}",
+        output
+    );
+
+    // All packages should be installed
+    assert!(target_dir.join(".vimrc").is_symlink());
+    assert!(target_dir.join(".gitconfig").is_symlink());
+    assert!(target_dir.join(".bashrc").is_symlink());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Installing 3 packages"));
+    assert!(stdout.contains("Successfully installed all 3 packages"));
+}
+
+#[test]
+fn test_install_all_with_empty_stau_dir() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Install --all with no packages
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "--all"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("No packages found"));
+}
+
+#[test]
+fn test_install_all_with_no_setup() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Create packages with setup scripts
+    let vim_dir = stau_dir.join("vim");
+    fs::create_dir(&vim_dir).unwrap();
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    let marker_file = target_dir.join("setup-ran");
+    let setup_script = vim_dir.join("setup.sh");
+    create_script(
+        &setup_script,
+        &format!("#!/bin/bash\ntouch {}\n", marker_file.display()),
+    );
+
+    // Install --all with --no-setup
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "--all", "--no-setup"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(target_dir.join(".vimrc").is_symlink());
+    assert!(!marker_file.exists(), "Setup script should NOT have run");
+}
+
+#[test]
+fn test_install_all_with_dry_run() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+    create_test_package(&stau_dir, "git", &[".gitconfig"]);
+
+    // Install --all with --dry-run
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "--all", "--dry-run"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    // No files should be created (dry run)
+    assert!(!target_dir.join(".vimrc").exists());
+    assert!(!target_dir.join(".gitconfig").exists());
+}
+
+#[test]
+fn test_install_all_partial_failure() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Create packages
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+    create_test_package(&stau_dir, "git", &[".gitconfig"]);
+
+    // Create a conflict for vim
+    fs::write(target_dir.join(".vimrc"), "existing content").unwrap();
+
+    // Install --all should continue despite one failure
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "--all"])
+        .output()
+        .unwrap();
+
+    // Command succeeds overall (returns success even with partial failures)
+    assert!(output.status.success());
+
+    // git should be installed despite vim failure
+    assert!(target_dir.join(".gitconfig").is_symlink());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("1 failed"));
+}
+
+#[test]
+fn test_install_all_and_package_mutual_exclusion() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    // Try to use both --all and a package name
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "--all", "vim"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Cannot specify both --all and a package name"));
+}
+
+#[test]
+fn test_install_requires_package_or_all() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Try to install without package or --all
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Must specify either a package name or --all"));
+}
+
+// =============================================================================
+// Tests for uninstall --all
+// =============================================================================
+
+#[test]
+fn test_uninstall_all_packages() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Create and install multiple packages
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+    create_test_package(&stau_dir, "git", &[".gitconfig"]);
+    create_test_package(&stau_dir, "bash", &[".bashrc"]);
+
+    // Install all first
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "--all"])
+        .output()
+        .unwrap();
+
+    // Verify they're installed
+    assert!(target_dir.join(".vimrc").is_symlink());
+    assert!(target_dir.join(".gitconfig").is_symlink());
+    assert!(target_dir.join(".bashrc").is_symlink());
+
+    // Uninstall all packages
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["uninstall", "--all"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Uninstall --all failed: {:?}",
+        output
+    );
+
+    // All files should be regular files now (not symlinks)
+    assert!(!target_dir.join(".vimrc").is_symlink());
+    assert!(!target_dir.join(".gitconfig").is_symlink());
+    assert!(!target_dir.join(".bashrc").is_symlink());
+
+    // Files should still exist (copied back)
+    assert!(target_dir.join(".vimrc").exists());
+    assert!(target_dir.join(".gitconfig").exists());
+    assert!(target_dir.join(".bashrc").exists());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Uninstalling 3 packages"));
+    assert!(stdout.contains("Successfully uninstalled all 3 packages"));
+}
+
+#[test]
+fn test_uninstall_all_with_empty_stau_dir() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Uninstall --all with no packages
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["uninstall", "--all"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("No packages found"));
+}
+
+#[test]
+fn test_uninstall_all_with_no_teardown() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Create package with teardown script
+    let vim_dir = stau_dir.join("vim");
+    fs::create_dir(&vim_dir).unwrap();
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    let marker_file = target_dir.join("teardown-ran");
+    let teardown_script = vim_dir.join("teardown.sh");
+    create_script(
+        &teardown_script,
+        &format!("#!/bin/bash\ntouch {}\n", marker_file.display()),
+    );
+
+    // Install first
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim", "--no-setup"])
+        .output()
+        .unwrap();
+
+    // Uninstall --all with --no-teardown
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["uninstall", "--all", "--no-teardown"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(!target_dir.join(".vimrc").is_symlink());
+    assert!(!marker_file.exists(), "Teardown script should NOT have run");
+}
+
+#[test]
+fn test_uninstall_all_with_dry_run() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+    create_test_package(&stau_dir, "git", &[".gitconfig"]);
+
+    // Install all first
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "--all"])
+        .output()
+        .unwrap();
+
+    // Uninstall --all with --dry-run
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["uninstall", "--all", "--dry-run"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    // Symlinks should still exist (dry run doesn't actually uninstall)
+    assert!(target_dir.join(".vimrc").is_symlink());
+    assert!(target_dir.join(".gitconfig").is_symlink());
+}
+
+#[test]
+fn test_uninstall_all_partial_failure() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Create packages
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+    create_test_package(&stau_dir, "git", &[".gitconfig"]);
+    create_test_package(&stau_dir, "nonexistent_in_source", &[".config"]);
+
+    // Install only vim and git
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim"])
+        .output()
+        .unwrap();
+
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "git"])
+        .output()
+        .unwrap();
+
+    // Delete the source file for nonexistent_in_source to create a scenario where
+    // uninstall will work but may encounter issues
+    fs::remove_dir_all(stau_dir.join("nonexistent_in_source")).unwrap();
+    fs::create_dir(stau_dir.join("nonexistent_in_source")).unwrap();
+
+    // Uninstall --all should continue despite one having no symlinks
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["uninstall", "--all"])
+        .output()
+        .unwrap();
+
+    // Command succeeds overall
+    assert!(output.status.success());
+
+    // vim and git should be uninstalled
+    assert!(!target_dir.join(".vimrc").is_symlink());
+    assert!(!target_dir.join(".gitconfig").is_symlink());
+}
+
+#[test]
+fn test_uninstall_all_and_package_mutual_exclusion() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    // Try to use both --all and a package name
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["uninstall", "--all", "vim"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Cannot specify both --all and a package name"));
+}
+
+#[test]
+fn test_uninstall_requires_package_or_all() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Try to uninstall without package or --all
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["uninstall"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Must specify either a package name or --all"));
+}
+
+#[test]
+fn test_uninstall_all_runs_teardown_scripts() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Create packages with teardown scripts
+    let vim_dir = stau_dir.join("vim");
+    fs::create_dir(&vim_dir).unwrap();
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    let git_dir = stau_dir.join("git");
+    fs::create_dir(&git_dir).unwrap();
+    create_test_package(&stau_dir, "git", &[".gitconfig"]);
+
+    let vim_marker = target_dir.join("vim-teardown-ran");
+    let git_marker = target_dir.join("git-teardown-ran");
+
+    create_script(
+        &vim_dir.join("teardown.sh"),
+        &format!("#!/bin/bash\ntouch {}\n", vim_marker.display()),
+    );
+    create_script(
+        &git_dir.join("teardown.sh"),
+        &format!("#!/bin/bash\ntouch {}\n", git_marker.display()),
+    );
+
+    // Install all first (without setup)
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "--all", "--no-setup"])
+        .output()
+        .unwrap();
+
+    // Uninstall --all (teardown should run by default)
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["uninstall", "--all"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(vim_marker.exists(), "Vim teardown script should have run");
+    assert!(git_marker.exists(), "Git teardown script should have run");
+}
+
+#[test]
+fn test_uninstall_all_verbose() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+    create_test_package(&stau_dir, "git", &[".gitconfig"]);
+
+    // Install all first
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "--all"])
+        .output()
+        .unwrap();
+
+    // Uninstall --all with --verbose
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["uninstall", "--all", "--verbose"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Verbose output should show package-by-package progress
+    assert!(stdout.contains("--- Uninstalling package:"));
+    assert!(stdout.contains("Package directory:") || stdout.contains("STAU_DIR:"));
+}

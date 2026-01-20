@@ -54,8 +54,12 @@ enum Commands {
     /// Uninstall a package (removes symlinks and restores original files from dotfiles repo)
     #[command(visible_alias = "u", visible_alias = "rm")]
     Uninstall {
-        /// Package name to uninstall
-        package: String,
+        /// Package name to uninstall (required unless --all is specified)
+        package: Option<String>,
+
+        /// Uninstall all packages
+        #[arg(short, long)]
+        all: bool,
 
         /// Target directory (default: $HOME or $STAU_TARGET)
         #[arg(short, long, env = "STAU_TARGET")]
@@ -185,16 +189,34 @@ fn run(cli: Cli) -> Result<()> {
 
         Commands::Uninstall {
             package,
+            all,
             target,
             no_teardown,
-        } => uninstall_package(
-            &config,
-            &package,
-            target,
-            no_teardown,
-            cli.dry_run,
-            cli.verbose,
-        ),
+        } => {
+            if all && package.is_some() {
+                return Err(error::StauError::InvalidArguments(
+                    "Cannot specify both --all and a package name".to_string(),
+                ));
+            }
+            if !all && package.is_none() {
+                return Err(error::StauError::InvalidArguments(
+                    "Must specify either a package name or --all".to_string(),
+                ));
+            }
+
+            if all {
+                uninstall_all_packages(&config, target, no_teardown, cli.dry_run, cli.verbose)
+            } else {
+                uninstall_package(
+                    &config,
+                    package.as_ref().unwrap(),
+                    target,
+                    no_teardown,
+                    cli.dry_run,
+                    cli.verbose,
+                )
+            }
+        }
 
         Commands::Restow {
             package,
@@ -368,6 +390,63 @@ fn install_all_packages(
     } else {
         println!(
             "Installed {} packages, {} failed",
+            success_count, error_count
+        );
+    }
+
+    Ok(())
+}
+
+/// Uninstalls all packages found in STAU_DIR.
+///
+/// For each package, teardown scripts are run (unless skipped) and symlinks are removed.
+/// If any package fails to uninstall, the error is reported but uninstallation continues
+/// for remaining packages.
+fn uninstall_all_packages(
+    config: &Config,
+    target: Option<PathBuf>,
+    no_teardown: bool,
+    dry_run: bool,
+    verbose: bool,
+) -> Result<()> {
+    let packages = package::list_packages(&config.stau_dir)?;
+
+    if packages.is_empty() {
+        println!("No packages found in {}", config.stau_dir.display());
+        return Ok(());
+    }
+
+    println!("Uninstalling {} packages...\n", packages.len());
+
+    let mut success_count = 0;
+    let mut error_count = 0;
+
+    for pkg in &packages {
+        if verbose {
+            println!("--- Uninstalling package: {} ---", pkg);
+        }
+
+        match uninstall_package(config, pkg, target.clone(), no_teardown, dry_run, verbose) {
+            Ok(()) => {
+                success_count += 1;
+            }
+            Err(e) => {
+                eprintln!("Failed to uninstall '{}': {}", pkg, e);
+                error_count += 1;
+            }
+        }
+
+        if verbose {
+            println!();
+        }
+    }
+
+    println!();
+    if error_count == 0 {
+        println!("Successfully uninstalled all {} packages", success_count);
+    } else {
+        println!(
+            "Uninstalled {} packages, {} failed",
             success_count, error_count
         );
     }
