@@ -1,3 +1,10 @@
+## [3.1.0](https://github.com/mhalder/stau/compare/v3.0.0...v3.1.0) (2026-01-20)
+
+### Features
+
+* **cli:** add --all flag to install command ([58c3b15](https://github.com/mhalder/stau/commit/58c3b15c2e67b7759e3ce18a55e41b37d485e910))
+* **cli:** add --all flag to uninstall command ([61d6df4](https://github.com/mhalder/stau/commit/61d6df490abf9d9e14bf7ecc2a3f606d8ae8a189))
+
 ## [3.0.0](https://github.com/mhalder/stau/compare/v2.0.2...v3.0.0) (2026-01-19)
 
 ### ⚠ BREAKING CHANGES
