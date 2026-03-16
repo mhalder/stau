@@ -1,3 +1,9 @@
+## [3.1.1](https://github.com/mhalder/stau/compare/v3.1.0...v3.1.1) (2026-03-16)
+
+### Bug Fixes
+
+* **test:** use CARGO_BIN_EXE for binary lookup instead of path manipulation ([6511e8c](https://github.com/mhalder/stau/commit/6511e8ca247462371bff1d2ae2417d40f7283f94)), closes [#20](https://github.com/mhalder/stau/issues/20)
+
 ## [3.1.0](https://github.com/mhalder/stau/compare/v3.0.0...v3.1.0) (2026-01-20)
 
 ### Features
