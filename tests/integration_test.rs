@@ -7,11 +7,7 @@ use tempfile::TempDir;
 
 /// Helper to get the path to the stau binary
 fn stau_binary() -> PathBuf {
-    let mut path = std::env::current_exe().unwrap();
-    path.pop(); // Remove test binary name
-    path.pop(); // Remove 'deps'
-    path.push("stau");
-    path
+    PathBuf::from(env!("CARGO_BIN_EXE_stau"))
 }
 
 /// Helper to create a test package with files
