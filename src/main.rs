@@ -176,9 +176,14 @@ fn run(cli: Cli) -> Result<()> {
             if all {
                 install_all_packages(&config, target, no_setup, cli.dry_run, cli.verbose)
             } else {
+                let package = package.ok_or_else(|| {
+                    error::StauError::InvalidArguments(
+                        "Must specify either a package name or --all".to_string(),
+                    )
+                })?;
                 install_package(
                     &config,
-                    package.as_ref().unwrap(),
+                    &package,
                     target,
                     no_setup,
                     cli.dry_run,
@@ -207,9 +212,14 @@ fn run(cli: Cli) -> Result<()> {
             if all {
                 uninstall_all_packages(&config, target, no_teardown, cli.dry_run, cli.verbose)
             } else {
+                let package = package.ok_or_else(|| {
+                    error::StauError::InvalidArguments(
+                        "Must specify either a package name or --all".to_string(),
+                    )
+                })?;
                 uninstall_package(
                     &config,
-                    package.as_ref().unwrap(),
+                    &package,
                     target,
                     no_teardown,
                     cli.dry_run,

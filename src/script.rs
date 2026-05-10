@@ -1,6 +1,9 @@
 use crate::error::{Result, StauError, map_io_error};
+use std::io;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output};
+use std::thread;
+use std::time::Duration;
 
 /// Executes a setup or teardown script for a package.
 ///
@@ -29,13 +32,8 @@ pub fn execute_script(
         println!("Executing: {}", script_path.display());
     }
 
-    let output = Command::new(script_path)
-        .current_dir(target_dir)
-        .env("STAU_DIR", stau_dir)
-        .env("STAU_PACKAGE", package_name)
-        .env("STAU_TARGET", target_dir)
-        .output()
-        .map_err(|e| {
+    let output =
+        run_script_command(script_path, package_name, stau_dir, target_dir).map_err(|e| {
             map_io_error(
                 e,
                 format!(
@@ -80,6 +78,36 @@ pub fn execute_script(
     Ok(())
 }
 
+fn run_script_command(
+    script_path: &Path,
+    package_name: &str,
+    stau_dir: &Path,
+    target_dir: &Path,
+) -> io::Result<Output> {
+    const MAX_ATTEMPTS: usize = 3;
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        let output = Command::new(script_path)
+            .current_dir(target_dir)
+            .env("STAU_DIR", stau_dir)
+            .env("STAU_PACKAGE", package_name)
+            .env("STAU_TARGET", target_dir)
+            .output();
+
+        match output {
+            Ok(output) => return Ok(output),
+            Err(error)
+                if error.kind() == io::ErrorKind::ExecutableFileBusy && attempt < MAX_ATTEMPTS =>
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("retry loop always returns")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,10 +128,10 @@ mod tests {
         fs::set_permissions(path, perms).unwrap();
 
         // Sync directory to ensure metadata changes are persisted
-        if let Some(parent) = path.parent() {
-            if let Ok(dir) = fs::File::open(parent) {
-                let _ = dir.sync_all();
-            }
+        if let Some(parent) = path.parent()
+            && let Ok(dir) = fs::File::open(parent)
+        {
+            let _ = dir.sync_all();
         }
     }
 
