@@ -377,49 +377,13 @@ fn install_all_packages(
     dry_run: bool,
     verbose: bool,
 ) -> Result<()> {
-    let packages = package::list_packages(&config.stau_dir)?;
-
-    if packages.is_empty() {
-        println!("No packages found in {}", config.stau_dir.display());
-        return Ok(());
-    }
-
-    println!("Installing {} packages...\n", packages.len());
-
-    let mut success_count = 0;
-    let mut error_count = 0;
-
-    for pkg in &packages {
-        if verbose {
-            println!("--- Installing package: {} ---", pkg);
-        }
-
-        match install_package(config, pkg, target.clone(), no_setup, dry_run, verbose) {
-            Ok(()) => {
-                success_count += 1;
-            }
-            Err(e) => {
-                eprintln!("Failed to install '{}': {}", pkg, e);
-                error_count += 1;
-            }
-        }
-
-        if verbose {
-            println!();
-        }
-    }
-
-    println!();
-    if error_count == 0 {
-        println!("Successfully installed all {} packages", success_count);
-    } else {
-        println!(
-            "Installed {} packages, {} failed",
-            success_count, error_count
-        );
-    }
-
-    Ok(())
+    run_for_all_packages(
+        config,
+        target,
+        verbose,
+        BatchLabels::new("Installing", "install", "installed", "Installed"),
+        |pkg, target| install_package(config, pkg, target, no_setup, dry_run, verbose),
+    )
 }
 
 /// Uninstalls all packages found in STAU_DIR.
@@ -434,6 +398,48 @@ fn uninstall_all_packages(
     dry_run: bool,
     verbose: bool,
 ) -> Result<()> {
+    run_for_all_packages(
+        config,
+        target,
+        verbose,
+        BatchLabels::new("Uninstalling", "uninstall", "uninstalled", "Uninstalled"),
+        |pkg, target| uninstall_package(config, pkg, target, no_teardown, dry_run, verbose),
+    )
+}
+
+struct BatchLabels {
+    progress: &'static str,
+    action: &'static str,
+    success: &'static str,
+    partial: &'static str,
+}
+
+impl BatchLabels {
+    fn new(
+        progress: &'static str,
+        action: &'static str,
+        success: &'static str,
+        partial: &'static str,
+    ) -> Self {
+        Self {
+            progress,
+            action,
+            success,
+            partial,
+        }
+    }
+}
+
+fn run_for_all_packages<F>(
+    config: &Config,
+    target: Option<PathBuf>,
+    verbose: bool,
+    labels: BatchLabels,
+    mut apply: F,
+) -> Result<()>
+where
+    F: FnMut(&str, Option<PathBuf>) -> Result<()>,
+{
     let packages = package::list_packages(&config.stau_dir)?;
 
     if packages.is_empty() {
@@ -441,22 +447,35 @@ fn uninstall_all_packages(
         return Ok(());
     }
 
-    println!("Uninstalling {} packages...\n", packages.len());
+    println!("{} {} packages...\n", labels.progress, packages.len());
+    let (success_count, error_count) =
+        apply_to_packages(&packages, target, verbose, &labels, &mut apply);
+    print_batch_summary(success_count, error_count, &labels);
+    Ok(())
+}
 
+fn apply_to_packages<F>(
+    packages: &[String],
+    target: Option<PathBuf>,
+    verbose: bool,
+    labels: &BatchLabels,
+    apply: &mut F,
+) -> (usize, usize)
+where
+    F: FnMut(&str, Option<PathBuf>) -> Result<()>,
+{
     let mut success_count = 0;
     let mut error_count = 0;
 
-    for pkg in &packages {
+    for pkg in packages {
         if verbose {
-            println!("--- Uninstalling package: {} ---", pkg);
+            println!("--- {} package: {} ---", labels.progress, pkg);
         }
 
-        match uninstall_package(config, pkg, target.clone(), no_teardown, dry_run, verbose) {
-            Ok(()) => {
-                success_count += 1;
-            }
+        match apply(pkg, target.clone()) {
+            Ok(()) => success_count += 1,
             Err(e) => {
-                eprintln!("Failed to uninstall '{}': {}", pkg, e);
+                eprintln!("Failed to {} '{}': {}", labels.action, pkg, e);
                 error_count += 1;
             }
         }
@@ -466,17 +485,22 @@ fn uninstall_all_packages(
         }
     }
 
+    (success_count, error_count)
+}
+
+fn print_batch_summary(success_count: usize, error_count: usize, labels: &BatchLabels) {
     println!();
     if error_count == 0 {
-        println!("Successfully uninstalled all {} packages", success_count);
+        println!(
+            "Successfully {} all {} packages",
+            labels.success, success_count
+        );
     } else {
         println!(
-            "Uninstalled {} packages, {} failed",
-            success_count, error_count
+            "{} {} packages, {} failed",
+            labels.partial, success_count, error_count
         );
     }
-
-    Ok(())
 }
 
 /// Options for uninstall operations.
