@@ -1,8 +1,5 @@
 # stau
 
-[![CI](https://github.com/mhalder/stau/workflows/CI/badge.svg)](https://github.com/mhalder/stau/actions)
-[![codecov](https://codecov.io/gh/mhalder/stau/branch/main/graph/badge.svg)](https://codecov.io/gh/mhalder/stau)
-[![Crates.io](https://img.shields.io/crates/v/stau.svg)](https://crates.io/crates/stau)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A modern dotfile manager written in Rust that combines GNU Stow-style symlink management with powerful setup automation.
@@ -25,24 +22,14 @@ Traditional tools like GNU Stow excel at symlink management but lack automation 
 
 ## Installation
 
-### From crates.io
-
-```bash
-cargo install stau
-```
-
 ### From source
 
 ```bash
-git clone https://github.com/mhalder/stau
+git clone https://github.com/mhalder/stau.git
 cd stau
 cargo build --release
 # Binary will be at target/release/stau
 ```
-
-### Pre-built binaries
-
-Download pre-built binaries for Linux x86_64 from the [releases page](https://github.com/mhalder/stau/releases).
 
 ## Quick Start
 
@@ -419,4 +406,4 @@ See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
 
 ## Contributing
 
-Contributions welcome! Please open an issue or pull request on [GitHub](https://github.com/mhalder/stau).
+Private project. Contributions handled internally.
