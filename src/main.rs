@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 mod config;
@@ -155,119 +155,134 @@ fn run(cli: Cli) -> Result<()> {
         println!("STAU_DIR: {}", config.stau_dir.display());
     }
 
-    match cli.command {
+    dispatch_command(&config, cli.command, cli.dry_run, cli.verbose)
+}
+
+fn dispatch_command(
+    config: &Config,
+    command: Commands,
+    dry_run: bool,
+    verbose: bool,
+) -> Result<()> {
+    match command {
         Commands::Install {
             package,
             all,
             target,
             no_setup,
-        } => {
-            if all && package.is_some() {
-                return Err(error::StauError::InvalidArguments(
-                    "Cannot specify both --all and a package name".to_string(),
-                ));
-            }
-            if !all && package.is_none() {
-                return Err(error::StauError::InvalidArguments(
-                    "Must specify either a package name or --all".to_string(),
-                ));
-            }
-
-            if all {
-                install_all_packages(&config, target, no_setup, cli.dry_run, cli.verbose)
-            } else {
-                let package = package.ok_or_else(|| {
-                    error::StauError::InvalidArguments(
-                        "Must specify either a package name or --all".to_string(),
-                    )
-                })?;
-                install_package(
-                    &config,
-                    &package,
-                    target,
-                    no_setup,
-                    cli.dry_run,
-                    cli.verbose,
-                )
-            }
-        }
-
+        } => run_install(config, package, all, target, no_setup, dry_run, verbose),
         Commands::Uninstall {
             package,
             all,
             target,
             no_teardown,
-        } => {
-            if all && package.is_some() {
-                return Err(error::StauError::InvalidArguments(
-                    "Cannot specify both --all and a package name".to_string(),
-                ));
-            }
-            if !all && package.is_none() {
-                return Err(error::StauError::InvalidArguments(
-                    "Must specify either a package name or --all".to_string(),
-                ));
-            }
-
-            if all {
-                uninstall_all_packages(&config, target, no_teardown, cli.dry_run, cli.verbose)
-            } else {
-                let package = package.ok_or_else(|| {
-                    error::StauError::InvalidArguments(
-                        "Must specify either a package name or --all".to_string(),
-                    )
-                })?;
-                uninstall_package(
-                    &config,
-                    &package,
-                    target,
-                    no_teardown,
-                    cli.dry_run,
-                    cli.verbose,
-                )
-            }
-        }
-
+        } => run_uninstall(config, package, all, target, no_teardown, dry_run, verbose),
         Commands::Restow {
             package,
             target,
             no_setup,
             no_teardown,
-        } => {
-            // Uninstall first (without copying files back)
-            let opts = UninstallOptions {
-                no_teardown,
-                copy_files_back: false, // Don't copy for restow!
-                dry_run: cli.dry_run,
-                verbose: cli.verbose,
-            };
-            uninstall_package_internal(&config, &package, target.clone(), opts)?;
-
-            // Then install
-            install_package(
-                &config,
-                &package,
-                target,
-                no_setup,
-                cli.dry_run,
-                cli.verbose,
-            )
-        }
-
+        } => restow_package(
+            config,
+            &package,
+            target,
+            no_setup,
+            no_teardown,
+            dry_run,
+            verbose,
+        ),
         Commands::Adopt {
             package,
             files,
             target,
-        } => adopt_files(&config, &package, &files, target, cli.dry_run, cli.verbose),
-
-        Commands::List { target } => list_packages(&config, target),
-
-        Commands::Status { package, target } => show_status(&config, &package, target),
-
+        } => adopt_files(config, &package, &files, target, dry_run, verbose),
+        Commands::List { target } => list_packages(config, target),
+        Commands::Status { package, target } => show_status(config, &package, target),
         Commands::Clean { package, target } => {
-            clean_broken_symlinks(&config, &package, target, cli.dry_run, cli.verbose)
+            clean_broken_symlinks(config, &package, target, dry_run, verbose)
         }
     }
+}
+
+fn require_single_or_all(package: Option<String>, all: bool) -> Result<Option<String>> {
+    match (all, package) {
+        (true, Some(_)) => Err(error::StauError::InvalidArguments(
+            "Cannot specify both --all and a package name".to_string(),
+        )),
+        (false, None) => Err(error::StauError::InvalidArguments(
+            "Must specify either a package name or --all".to_string(),
+        )),
+        (_, package) => Ok(package),
+    }
+}
+
+fn run_install(
+    config: &Config,
+    package: Option<String>,
+    all: bool,
+    target: Option<PathBuf>,
+    no_setup: bool,
+    dry_run: bool,
+    verbose: bool,
+) -> Result<()> {
+    let package = require_single_or_all(package, all)?;
+
+    if all {
+        install_all_packages(config, target, no_setup, dry_run, verbose)
+    } else {
+        install_package(
+            config,
+            &package.expect("validated package"),
+            target,
+            no_setup,
+            dry_run,
+            verbose,
+        )
+    }
+}
+
+fn run_uninstall(
+    config: &Config,
+    package: Option<String>,
+    all: bool,
+    target: Option<PathBuf>,
+    no_teardown: bool,
+    dry_run: bool,
+    verbose: bool,
+) -> Result<()> {
+    let package = require_single_or_all(package, all)?;
+
+    if all {
+        uninstall_all_packages(config, target, no_teardown, dry_run, verbose)
+    } else {
+        uninstall_package(
+            config,
+            &package.expect("validated package"),
+            target,
+            no_teardown,
+            dry_run,
+            verbose,
+        )
+    }
+}
+
+fn restow_package(
+    config: &Config,
+    package: &str,
+    target: Option<PathBuf>,
+    no_setup: bool,
+    no_teardown: bool,
+    dry_run: bool,
+    verbose: bool,
+) -> Result<()> {
+    let opts = UninstallOptions {
+        no_teardown,
+        copy_files_back: false,
+        dry_run,
+        verbose,
+    };
+    uninstall_package_internal(config, package, target.clone(), opts)?;
+    install_package(config, package, target, no_setup, dry_run, verbose)
 }
 
 /// Installs a package by creating symlinks from the package directory to the target directory.
@@ -512,38 +527,13 @@ fn uninstall_package_internal(
         println!("Target directory: {}", target_dir.display());
     }
 
-    // Check if package exists
     if !config.package_exists(package) {
         return Err(error::StauError::PackageNotFound(package.to_string()));
     }
 
-    // Run teardown script first if it exists and not skipped
-    if !opts.no_teardown
-        && let Some(teardown_script) = config.get_teardown_script(package)
-    {
-        if opts.verbose {
-            println!("Found teardown script: {}", teardown_script.display());
-        }
+    run_teardown_script(config, package, &target_dir, &opts);
 
-        // Note: PRD says teardown should continue even if it fails
-        if let Err(e) = script::execute_script(
-            &teardown_script,
-            package,
-            &config.stau_dir,
-            &target_dir,
-            opts.dry_run,
-            opts.verbose,
-        ) {
-            eprintln!("Warning: Teardown script failed: {}", e);
-            eprintln!("Continuing with uninstall...");
-        } else if !opts.dry_run {
-            println!("Teardown script completed successfully");
-        }
-    }
-
-    // Discover all files that would be in the package
     let mappings = package::discover_package_files(&package_dir, &target_dir)?;
-
     if opts.verbose {
         println!("Found {} symlinks to remove", mappings.len());
     }
@@ -553,58 +543,115 @@ fn uninstall_package_internal(
         return Ok(());
     }
 
+    let removed_count = remove_package_symlinks(&mappings, &opts)?;
+    print_uninstall_summary(package, removed_count, &opts);
+    Ok(())
+}
+
+fn run_teardown_script(config: &Config, package: &str, target_dir: &Path, opts: &UninstallOptions) {
+    if opts.no_teardown {
+        return;
+    }
+
+    let Some(teardown_script) = config.get_teardown_script(package) else {
+        return;
+    };
+
+    if opts.verbose {
+        println!("Found teardown script: {}", teardown_script.display());
+    }
+
+    match script::execute_script(
+        &teardown_script,
+        package,
+        &config.stau_dir,
+        target_dir,
+        opts.dry_run,
+        opts.verbose,
+    ) {
+        Err(e) => {
+            eprintln!("Warning: Teardown script failed: {}", e);
+            eprintln!("Continuing with uninstall...");
+        }
+        Ok(()) if !opts.dry_run => println!("Teardown script completed successfully"),
+        Ok(()) => {}
+    }
+}
+
+fn remove_package_symlinks(
+    mappings: &[symlink::SymlinkMapping],
+    opts: &UninstallOptions,
+) -> Result<usize> {
     let mut removed_count = 0;
 
-    // Remove symlinks and copy files back
-    for mapping in &mappings {
-        // Remove the symlink if it points to our source
-        let was_removed = symlink::remove_symlink(&mapping.target, &mapping.source, opts.dry_run)?;
-
-        if was_removed {
-            if opts.verbose || opts.dry_run {
-                println!("  Removing symlink: {}", mapping.target.display());
-            }
-
-            // Copy the source file to target location (unless we're doing a restow)
-            if opts.copy_files_back {
-                if opts.verbose || opts.dry_run {
-                    println!("  Copying file: {}", mapping.target.display());
-                }
-
-                // In dry-run mode, skip the conflict check since the symlink
-                // wasn't actually removed yet
-                if !opts.dry_run && mapping.target.exists() {
-                    return Err(error::StauError::ConflictingFile(mapping.target.clone()));
-                } else if opts.dry_run && opts.verbose {
-                    println!("    (conflict check skipped in dry-run)");
-                }
-
-                symlink::copy_file(&mapping.source, &mapping.target, opts.dry_run)?;
-            }
+    for mapping in mappings {
+        if remove_package_symlink(mapping, opts)? {
             removed_count += 1;
-        } else if opts.verbose {
+        }
+    }
+
+    Ok(removed_count)
+}
+
+fn remove_package_symlink(
+    mapping: &symlink::SymlinkMapping,
+    opts: &UninstallOptions,
+) -> Result<bool> {
+    let was_removed = symlink::remove_symlink(&mapping.target, &mapping.source, opts.dry_run)?;
+
+    if !was_removed {
+        if opts.verbose {
             println!(
                 "  Skipping {} (not a stau-managed symlink)",
                 mapping.target.display()
             );
         }
+        return Ok(false);
     }
 
-    if !opts.dry_run {
-        if opts.copy_files_back {
-            println!(
-                "Successfully uninstalled {} ({} symlinks removed, files copied back)",
-                package, removed_count
-            );
-        } else {
-            println!(
-                "Successfully removed {} symlinks for {}",
-                removed_count, package
-            );
-        }
+    if opts.verbose || opts.dry_run {
+        println!("  Removing symlink: {}", mapping.target.display());
     }
 
-    Ok(())
+    if opts.copy_files_back {
+        copy_source_to_target(mapping, opts)?;
+    }
+
+    Ok(true)
+}
+
+fn copy_source_to_target(mapping: &symlink::SymlinkMapping, opts: &UninstallOptions) -> Result<()> {
+    if opts.verbose || opts.dry_run {
+        println!("  Copying file: {}", mapping.target.display());
+    }
+
+    if !opts.dry_run && mapping.target.exists() {
+        return Err(error::StauError::ConflictingFile(mapping.target.clone()));
+    }
+
+    if opts.dry_run && opts.verbose {
+        println!("    (conflict check skipped in dry-run)");
+    }
+
+    symlink::copy_file(&mapping.source, &mapping.target, opts.dry_run)
+}
+
+fn print_uninstall_summary(package: &str, removed_count: usize, opts: &UninstallOptions) {
+    if opts.dry_run {
+        return;
+    }
+
+    if opts.copy_files_back {
+        println!(
+            "Successfully uninstalled {} ({} symlinks removed, files copied back)",
+            package, removed_count
+        );
+    } else {
+        println!(
+            "Successfully removed {} symlinks for {}",
+            removed_count, package
+        );
+    }
 }
 
 /// Lists all packages in STAU_DIR and their installation status.
@@ -618,62 +665,77 @@ fn list_packages(config: &Config, target: Option<PathBuf>) -> Result<()> {
     }
 
     println!("Packages in {}:\n", config.stau_dir.display());
-
     for pkg in packages {
-        let package_dir = config.get_package_dir(&pkg);
-
-        // Check if package is installed by checking if any symlinks exist
-        match package::discover_package_files(&package_dir, &target_dir) {
-            Ok(mappings) => {
-                if mappings.is_empty() {
-                    println!("  {:<20} [not installed]", pkg);
-                } else {
-                    // Count how many are actually installed
-                    let mut installed_count = 0;
-                    let mut broken_count = 0;
-
-                    for mapping in &mappings {
-                        if let Ok(true) = symlink::is_stau_symlink(&mapping.target, &mapping.source)
-                        {
-                            installed_count += 1;
-                        }
-
-                        if symlink::is_broken_symlink(&mapping.target) {
-                            broken_count += 1;
-                        }
-                    }
-
-                    if installed_count == 0 {
-                        println!("  {:<20} [not installed]", pkg);
-                    } else if broken_count > 0 {
-                        println!(
-                            "  {:<20} [installed]  {} symlinks  ({} broken)",
-                            pkg, installed_count, broken_count
-                        );
-                    } else if installed_count == mappings.len() {
-                        println!(
-                            "  {:<20} [installed]  {} symlink{}",
-                            pkg,
-                            installed_count,
-                            if installed_count == 1 { "" } else { "s" }
-                        );
-                    } else {
-                        println!(
-                            "  {:<20} [partial]    {}/{} symlinks",
-                            pkg,
-                            installed_count,
-                            mappings.len()
-                        );
-                    }
-                }
-            }
-            Err(e) => {
-                println!("  {:<20} [error: {}]", pkg, e);
-            }
-        }
+        print_package_status(config, &target_dir, &pkg);
     }
 
     Ok(())
+}
+
+struct PackageStatus {
+    total_count: usize,
+    installed_count: usize,
+    broken_count: usize,
+}
+
+fn print_package_status(config: &Config, target_dir: &Path, pkg: &str) {
+    let package_dir = config.get_package_dir(pkg);
+
+    match package::discover_package_files(&package_dir, target_dir) {
+        Ok(mappings) => print_package_status_from_mappings(pkg, &mappings),
+        Err(e) => println!("  {:<20} [error: {}]", pkg, e),
+    }
+}
+
+fn print_package_status_from_mappings(pkg: &str, mappings: &[symlink::SymlinkMapping]) {
+    let status = package_status(mappings);
+
+    if status.installed_count == 0 {
+        println!("  {:<20} [not installed]", pkg);
+    } else if status.broken_count > 0 {
+        println!(
+            "  {:<20} [installed]  {} symlinks  ({} broken)",
+            pkg, status.installed_count, status.broken_count
+        );
+    } else if status.installed_count == status.total_count {
+        println!(
+            "  {:<20} [installed]  {} symlink{}",
+            pkg,
+            status.installed_count,
+            plural_suffix(status.installed_count)
+        );
+    } else {
+        println!(
+            "  {:<20} [partial]    {}/{} symlinks",
+            pkg, status.installed_count, status.total_count
+        );
+    }
+}
+
+fn package_status(mappings: &[symlink::SymlinkMapping]) -> PackageStatus {
+    let installed_count = mappings
+        .iter()
+        .filter(|mapping| {
+            matches!(
+                symlink::is_stau_symlink(&mapping.target, &mapping.source),
+                Ok(true)
+            )
+        })
+        .count();
+    let broken_count = mappings
+        .iter()
+        .filter(|mapping| symlink::is_broken_symlink(&mapping.target))
+        .count();
+
+    PackageStatus {
+        total_count: mappings.len(),
+        installed_count,
+        broken_count,
+    }
+}
+
+fn plural_suffix(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
 }
 
 /// Adopts existing files into a package by moving them to the package directory and creating symlinks.
@@ -685,26 +747,10 @@ fn adopt_files(
     dry_run: bool,
     verbose: bool,
 ) -> Result<()> {
-    use std::fs;
-
     let target_dir = config.get_target(target);
     let package_dir = config.get_package_dir(package);
 
-    // Create package directory if it doesn't exist
-    if !package_dir.exists() {
-        if verbose || dry_run {
-            println!("Creating package directory: {}", package_dir.display());
-        }
-        if !dry_run {
-            fs::create_dir_all(&package_dir).map_err(|e| {
-                map_io_error(
-                    e,
-                    format!("Cannot create package directory: {}", package_dir.display()),
-                )
-            })?;
-        }
-    }
-
+    ensure_package_dir(&package_dir, dry_run, verbose)?;
     println!(
         "Adopting {} file(s) into package '{}':",
         files.len(),
@@ -712,49 +758,7 @@ fn adopt_files(
     );
 
     for file_path in files {
-        // Make sure the file exists
-        if !file_path.exists() {
-            eprintln!("Warning: File does not exist: {}", file_path.display());
-            continue;
-        }
-
-        // Calculate relative path from target directory
-        let rel_path = match file_path.strip_prefix(&target_dir) {
-            Ok(p) => p,
-            Err(_) => {
-                eprintln!(
-                    "Warning: File {} is not in target directory {}",
-                    file_path.display(),
-                    target_dir.display()
-                );
-                continue;
-            }
-        };
-
-        // Destination in package directory
-        let dest = package_dir.join(rel_path);
-
-        // Check if destination already exists
-        if dest.exists() {
-            return Err(error::StauError::ConflictingFile(dest));
-        }
-
-        if verbose || dry_run {
-            println!("  {} -> {}", file_path.display(), dest.display());
-        }
-
-        if !dry_run {
-            // Create parent directories if needed
-            if let Some(parent) = dest.parent() {
-                fs::create_dir_all(parent).map_err(error::StauError::Io)?;
-            }
-
-            // Move the file
-            fs::rename(file_path, &dest).map_err(error::StauError::Io)?;
-
-            // Create symlink at original location
-            symlink::create_symlink(&dest, file_path, false)?;
-        }
+        adopt_file(file_path, &target_dir, &package_dir, dry_run, verbose)?;
     }
 
     if !dry_run {
@@ -766,6 +770,89 @@ fn adopt_files(
     }
 
     Ok(())
+}
+
+fn ensure_package_dir(package_dir: &Path, dry_run: bool, verbose: bool) -> Result<()> {
+    use std::fs;
+
+    if package_dir.exists() {
+        return Ok(());
+    }
+
+    if verbose || dry_run {
+        println!("Creating package directory: {}", package_dir.display());
+    }
+
+    if !dry_run {
+        fs::create_dir_all(package_dir).map_err(|e| {
+            map_io_error(
+                e,
+                format!("Cannot create package directory: {}", package_dir.display()),
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+fn adopt_file(
+    file_path: &Path,
+    target_dir: &Path,
+    package_dir: &Path,
+    dry_run: bool,
+    verbose: bool,
+) -> Result<()> {
+    let Some(dest) = adopt_destination(file_path, target_dir, package_dir)? else {
+        return Ok(());
+    };
+
+    if verbose || dry_run {
+        println!("  {} -> {}", file_path.display(), dest.display());
+    }
+
+    if !dry_run {
+        move_file_into_package(file_path, &dest)?;
+    }
+
+    Ok(())
+}
+
+fn adopt_destination(
+    file_path: &Path,
+    target_dir: &Path,
+    package_dir: &Path,
+) -> Result<Option<PathBuf>> {
+    if !file_path.exists() {
+        eprintln!("Warning: File does not exist: {}", file_path.display());
+        return Ok(None);
+    }
+
+    let Ok(rel_path) = file_path.strip_prefix(target_dir) else {
+        eprintln!(
+            "Warning: File {} is not in target directory {}",
+            file_path.display(),
+            target_dir.display()
+        );
+        return Ok(None);
+    };
+
+    let dest = package_dir.join(rel_path);
+    if dest.exists() {
+        return Err(error::StauError::ConflictingFile(dest));
+    }
+
+    Ok(Some(dest))
+}
+
+fn move_file_into_package(file_path: &Path, dest: &Path) -> Result<()> {
+    use std::fs;
+
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(error::StauError::Io)?;
+    }
+
+    fs::rename(file_path, dest).map_err(error::StauError::Io)?;
+    symlink::create_symlink(dest, file_path, false)
 }
 
 /// Shows detailed status for a specific package including symlink states and script availability.
