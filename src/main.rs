@@ -318,28 +318,27 @@ fn install_package(
 
     if mappings.is_empty() {
         println!("No files to link in package '{}'", package);
-        return Ok(());
-    }
+    } else {
+        // Create symlinks for all files
+        for mapping in &mappings {
+            if verbose || dry_run {
+                println!(
+                    "  {} -> {}",
+                    mapping.target.display(),
+                    mapping.source.display()
+                );
+            }
 
-    // Create symlinks for all files
-    for mapping in &mappings {
-        if verbose || dry_run {
-            println!(
-                "  {} -> {}",
-                mapping.target.display(),
-                mapping.source.display()
-            );
+            symlink::create_symlink(&mapping.source, &mapping.target, dry_run)?;
         }
 
-        symlink::create_symlink(&mapping.source, &mapping.target, dry_run)?;
-    }
-
-    if !dry_run {
-        println!(
-            "Successfully installed {} ({} symlinks created)",
-            package,
-            mappings.len()
-        );
+        if !dry_run {
+            println!(
+                "Successfully installed {} ({} symlinks created)",
+                package,
+                mappings.len()
+            );
+        }
     }
 
     // Run setup script if it exists and not skipped

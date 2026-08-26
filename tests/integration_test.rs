@@ -122,6 +122,39 @@ fn test_install_with_setup_script() {
 }
 
 #[test]
+fn test_install_setup_only_package() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let package_dir = stau_dir.join("betterwright");
+    fs::create_dir(&package_dir).unwrap();
+
+    let marker_file = target_dir.join("setup-ran");
+    create_script(
+        &package_dir.join("setup.sh"),
+        &format!("#!/bin/bash\ntouch {}\n", marker_file.display()),
+    );
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "betterwright"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Setup-only package install failed: {:?}",
+        output
+    );
+    assert!(marker_file.exists(), "Setup-only package script didn't run");
+}
+
+#[test]
 fn test_install_no_setup_flag() {
     let temp_dir = TempDir::new().unwrap();
     let stau_dir = temp_dir.path().join("dotfiles");
