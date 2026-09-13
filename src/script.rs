@@ -22,9 +22,7 @@ pub fn execute_script(
     verbose: bool,
 ) -> Result<()> {
     if dry_run {
-        if verbose {
-            println!("Would execute: {}", script_path.display());
-        }
+        println!("Would execute: {}", script_path.display());
         return Ok(());
     }
 

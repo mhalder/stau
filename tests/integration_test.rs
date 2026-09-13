@@ -2414,3 +2414,40 @@ fn test_setup_script_can_read_stdin() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("script output"), "stdout: {stdout}");
 }
+
+#[test]
+fn test_dry_run_reports_scripts_without_verbose() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    let marker_file = target_dir.join("script-ran");
+    for script in ["setup.sh", "teardown.sh"] {
+        create_script(
+            &stau_dir.join("vim").join(script),
+            &format!("#!/bin/bash\ntouch {}\n", marker_file.display()),
+        );
+    }
+
+    for (command, script) in [("install", "setup.sh"), ("uninstall", "teardown.sh")] {
+        let output = Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .args([command, "vim", "--dry-run"])
+            .output()
+            .unwrap();
+
+        assert!(output.status.success(), "{command} failed: {:?}", output);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("Would execute:") && stdout.contains(script),
+            "{command} stdout: {stdout}"
+        );
+    }
+
+    assert!(!marker_file.exists(), "Dry run must not execute scripts");
+}
