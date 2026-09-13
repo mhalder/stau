@@ -2488,3 +2488,88 @@ fn test_setup_script_with_missing_target_names_the_directory() {
     );
     assert!(!stderr.contains("chmod"), "stderr: {stderr}");
 }
+
+#[test]
+fn test_uninstall_continues_after_a_failed_file() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    create_test_package(&stau_dir, "pkg", &[".a", "locked/.b", ".c"]);
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    assert!(run(&["install", "pkg"]).status.success());
+
+    // Removing locked/.b fails once its directory is read-only
+    let locked = target_dir.join("locked");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+    if fs::write(locked.join("probe"), "").is_ok() {
+        // Running as root, where permissions are not enforced
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+
+    let output = run(&["uninstall", "pkg"]);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(output.status.code(), Some(3), "output: {output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("locked/.b"), "stderr: {stderr}");
+
+    for file in [".a", ".c"] {
+        let path = target_dir.join(file);
+        assert!(!path.is_symlink(), "{file} should be uninstalled");
+        assert!(path.is_file(), "{file} should be copied back");
+    }
+    assert!(locked.join(".b").is_symlink());
+}
+
+#[test]
+fn test_uninstall_restores_symlink_when_copy_back_fails() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    create_test_package(&stau_dir, "pkg", &[".a", ".secret"]);
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    assert!(run(&["install", "pkg"]).status.success());
+
+    // Copying .secret back fails once the package file is unreadable
+    let secret = stau_dir.join("pkg/.secret");
+    fs::set_permissions(&secret, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read(&secret).is_ok() {
+        // Running as root, where permissions are not enforced
+        fs::set_permissions(&secret, fs::Permissions::from_mode(0o644)).unwrap();
+        return;
+    }
+
+    let output = run(&["uninstall", "pkg"]);
+    fs::set_permissions(&secret, fs::Permissions::from_mode(0o644)).unwrap();
+
+    assert_eq!(output.status.code(), Some(3), "output: {output:?}");
+    assert!(
+        target_dir.join(".secret").is_symlink(),
+        "symlink must be restored when the copy fails"
+    );
+    assert!(!target_dir.join(".a").is_symlink());
+    assert!(target_dir.join(".a").is_file());
+}

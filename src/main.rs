@@ -637,19 +637,33 @@ fn run_teardown_script(config: &Config, package: &str, target_dir: &Path, opts: 
     }
 }
 
+/// Removes every stau symlink of a package, continuing past failures so one bad file
+/// does not leave the rest of the package installed.
+///
+/// Every failure is reported; the last one is returned so its exit code is used.
 fn remove_package_symlinks(
     mappings: &[symlink::SymlinkMapping],
     opts: &UninstallOptions,
 ) -> Result<usize> {
     let mut removed_count = 0;
+    let mut errors = Vec::new();
 
     for mapping in mappings {
-        if remove_package_symlink(mapping, opts)? {
-            removed_count += 1;
+        match remove_package_symlink(mapping, opts) {
+            Ok(true) => removed_count += 1,
+            Ok(false) => {}
+            Err(e) => errors.push(e),
         }
     }
 
-    Ok(removed_count)
+    let Some(last_error) = errors.pop() else {
+        return Ok(removed_count);
+    };
+
+    for e in &errors {
+        eprintln!("Error: {}", e);
+    }
+    Err(last_error)
 }
 
 fn remove_package_symlink(
@@ -672,8 +686,22 @@ fn remove_package_symlink(
         println!("  Removing symlink: {}", mapping.target.display());
     }
 
-    if opts.copy_files_back {
-        copy_source_to_target(mapping, opts)?;
+    if opts.copy_files_back
+        && let Err(e) = copy_source_to_target(mapping, opts)
+    {
+        // The symlink is already gone; put it back so a failed copy does not
+        // leave the target file missing
+        if !opts.dry_run
+            && let Err(restore_error) =
+                symlink::create_symlink(&mapping.source, &mapping.target, false)
+        {
+            eprintln!(
+                "Warning: Could not restore symlink {}: {}",
+                mapping.target.display(),
+                restore_error
+            );
+        }
+        return Err(e);
     }
 
     Ok(true)

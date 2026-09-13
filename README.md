@@ -126,6 +126,8 @@ stau uninstall ghostty --dry-run        # Preview without making changes
 
 **Note:** If the teardown script fails, uninstall continues anyway (with a warning).
 
+If a symlink cannot be removed or its file cannot be copied back, uninstall still processes the remaining files, reports every failure, and exits with the error code of the last one. When copying a file back fails, its symlink is restored so the target file is not left missing.
+
 ### `stau restow <package>` (alias: `r`)
 
 Removes and recreates symlinks for a package. Useful after modifying the package structure or adding new files. Unlike `uninstall`, this does **not** copy files back. By default, both teardown and setup scripts run during restow.
