@@ -335,6 +335,8 @@ stau uses specific exit codes to indicate different error conditions:
 | 3    | Permission denied or I/O error                                        |
 | 4    | Setup or teardown script failed                                       |
 
+With `--all`, every package is processed even if some fail. The command then exits with code 1 if any package failed.
+
 ## Global Options
 
 These options work with all commands:

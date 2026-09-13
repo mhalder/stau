@@ -394,7 +394,7 @@ fn install_package(
 ///
 /// For each package, symlinks are created and setup scripts are run (unless skipped).
 /// If any package fails to install, the error is reported but installation continues
-/// for remaining packages.
+/// for remaining packages, and an error is returned once all packages were processed.
 fn install_all_packages(
     config: &Config,
     target: Option<PathBuf>,
@@ -415,7 +415,7 @@ fn install_all_packages(
 ///
 /// For each package, teardown scripts are run (unless skipped) and symlinks are removed.
 /// If any package fails to uninstall, the error is reported but uninstallation continues
-/// for remaining packages.
+/// for remaining packages, and an error is returned once all packages were processed.
 fn uninstall_all_packages(
     config: &Config,
     target: Option<PathBuf>,
@@ -476,6 +476,16 @@ where
     let (success_count, error_count) =
         apply_to_packages(&packages, target, verbose, &labels, &mut apply);
     print_batch_summary(success_count, error_count, &labels);
+
+    if error_count > 0 {
+        return Err(error::StauError::Other(format!(
+            "Failed to {} {} of {} packages",
+            labels.action,
+            error_count,
+            packages.len()
+        )));
+    }
+
     Ok(())
 }
 

@@ -1730,14 +1730,19 @@ fn test_install_all_partial_failure() {
         .output()
         .unwrap();
 
-    // Command succeeds overall (returns success even with partial failures)
-    assert!(output.status.success());
+    // Remaining packages are processed, but the command reports the failure
+    assert_eq!(output.status.code(), Some(1));
 
     // git should be installed despite vim failure
     assert!(target_dir.join(".gitconfig").is_symlink());
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("1 failed"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Failed to install 1 of 2 packages"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
