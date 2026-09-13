@@ -42,6 +42,13 @@ pub enum StauError {
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
 
+    #[error("IO error: {context}: {source}")]
+    IoWithContext {
+        context: String,
+        #[source]
+        source: io::Error,
+    },
+
     #[error("{0}")]
     Other(String),
 
@@ -61,20 +68,27 @@ impl StauError {
             StauError::StauDirNotFound(_) => 1,
             StauError::InvalidPath(_) => 1,
             StauError::Io(_) => 3,
+            StauError::IoWithContext { .. } => 3,
             StauError::Other(_) => 1,
             StauError::InvalidArguments(_) => 1,
         }
     }
 }
 
-/// Maps an IO error to StauError, converting PermissionDenied to StauError::PermissionDenied.
+/// Maps an IO error to StauError, attaching `context` so the message names the
+/// operation and path that failed.
 ///
-/// This helper reduces duplication when mapping IO errors throughout the codebase.
+/// PermissionDenied is converted to StauError::PermissionDenied, which carries a
+/// privilege hint. This helper reduces duplication when mapping IO errors
+/// throughout the codebase.
 pub fn map_io_error(e: std::io::Error, context: impl Into<String>) -> StauError {
     if e.kind() == std::io::ErrorKind::PermissionDenied {
         StauError::PermissionDenied(context.into())
     } else {
-        StauError::Io(e)
+        StauError::IoWithContext {
+            context: context.into(),
+            source: e,
+        }
     }
 }
 
@@ -182,7 +196,11 @@ mod tests {
     #[test]
     fn test_map_io_error_other() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
-        let stau_err = map_io_error(io_err, "Cannot write file");
-        assert!(matches!(stau_err, StauError::Io(_)));
+        let stau_err = map_io_error(io_err, "Cannot write file: /home/user/.vimrc");
+        assert!(matches!(stau_err, StauError::IoWithContext { .. }));
+        assert_eq!(stau_err.exit_code(), 3);
+        let message = stau_err.to_string();
+        assert!(message.contains("Cannot write file: /home/user/.vimrc"));
+        assert!(message.contains("file not found"));
     }
 }
