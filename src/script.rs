@@ -1,7 +1,7 @@
 use crate::error::{Result, StauError, map_io_error};
 use std::io;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Command, ExitStatus};
 use std::thread;
 use std::time::Duration;
 
@@ -32,7 +32,7 @@ pub fn execute_script(
         println!("Executing: {}", script_path.display());
     }
 
-    let output =
+    let status =
         run_script_command(script_path, package_name, stau_dir, target_dir).map_err(|e| {
             map_io_error(
                 e,
@@ -43,24 +43,23 @@ pub fn execute_script(
             )
         })?;
 
-    // Print stdout and stderr
-    if !output.stdout.is_empty() {
-        print!("{}", String::from_utf8_lossy(&output.stdout));
-    }
-    if !output.stderr.is_empty() {
-        eprint!("{}", String::from_utf8_lossy(&output.stderr));
-    }
-
     // Check exit status
-    if !output.status.success() {
+    if !status.success() {
+        use std::os::unix::process::ExitStatusExt;
+
         let script_type = if script_path.ends_with("setup.sh") {
             "setup"
         } else {
             "teardown"
         };
 
-        let exit_code = output.status.code().unwrap_or(-1);
-        let message = format!("{} script failed with exit code {}", script_type, exit_code);
+        let message = match (status.code(), status.signal()) {
+            (Some(code), _) => format!("{} script failed with exit code {}", script_type, code),
+            (None, Some(signal)) => {
+                format!("{} script was terminated by signal {}", script_type, signal)
+            }
+            (None, None) => format!("{} script failed", script_type),
+        };
 
         if script_type == "setup" {
             return Err(StauError::SetupScriptFailed {
@@ -78,24 +77,26 @@ pub fn execute_script(
     Ok(())
 }
 
+/// Runs the script with inherited stdin, stdout and stderr, so scripts can prompt
+/// for input and their output is shown as it is produced.
 fn run_script_command(
     script_path: &Path,
     package_name: &str,
     stau_dir: &Path,
     target_dir: &Path,
-) -> io::Result<Output> {
+) -> io::Result<ExitStatus> {
     const MAX_ATTEMPTS: usize = 3;
 
     for attempt in 1..=MAX_ATTEMPTS {
-        let output = Command::new(script_path)
+        let status = Command::new(script_path)
             .current_dir(target_dir)
             .env("STAU_DIR", stau_dir)
             .env("STAU_PACKAGE", package_name)
             .env("STAU_TARGET", target_dir)
-            .output();
+            .status();
 
-        match output {
-            Ok(output) => return Ok(output),
+        match status {
+            Ok(status) => return Ok(status),
             Err(error)
                 if error.kind() == io::ErrorKind::ExecutableFileBusy && attempt < MAX_ATTEMPTS =>
             {

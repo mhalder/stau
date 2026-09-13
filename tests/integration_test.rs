@@ -2374,3 +2374,43 @@ fn test_adopt_conflict_moves_nothing() {
     assert_eq!(fs::read_to_string(target_dir.join(".a")).unwrap(), "a");
     assert!(!stau_dir.join("pkg/.a").exists());
 }
+
+#[test]
+fn test_setup_script_can_read_stdin() {
+    use std::process::Stdio;
+
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let package_dir = stau_dir.join("pkg");
+    fs::create_dir(&package_dir).unwrap();
+    let answer_file = target_dir.join("answer");
+    create_script(
+        &package_dir.join("setup.sh"),
+        &format!(
+            "#!/bin/bash\nread -r answer\necho \"$answer\" > {}\necho 'script output'\n",
+            answer_file.display()
+        ),
+    );
+
+    let mut child = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "pkg"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"yes\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(output.status.success(), "Install failed: {:?}", output);
+    assert_eq!(fs::read_to_string(&answer_file).unwrap().trim(), "yes");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("script output"), "stdout: {stdout}");
+}
