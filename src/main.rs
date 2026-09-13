@@ -914,13 +914,7 @@ fn adopt_destination(
 }
 
 fn move_file_into_package(file_path: &Path, dest: &Path) -> Result<()> {
-    use std::fs;
-
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent).map_err(error::StauError::Io)?;
-    }
-
-    fs::rename(file_path, dest).map_err(error::StauError::Io)?;
+    symlink::move_file(file_path, dest)?;
     symlink::create_symlink(dest, file_path, false)
 }
 

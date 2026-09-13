@@ -170,6 +170,32 @@ pub fn copy_file(source: &Path, dest: &Path, dry_run: bool) -> Result<()> {
     Ok(())
 }
 
+/// Moves a file, creating parent directories of the destination as needed.
+///
+/// Falls back to copying and removing the source when source and destination are
+/// on different filesystems, where a rename is not possible.
+pub fn move_file(source: &Path, dest: &Path) -> Result<()> {
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            map_io_error(e, format!("Cannot create directory: {}", parent.display()))
+        })?;
+    }
+
+    match fs::rename(source, dest) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
+            fs::copy(source, dest)
+                .map_err(|e| map_io_error(e, format!("Cannot copy file: {}", dest.display())))?;
+            fs::remove_file(source)
+                .map_err(|e| map_io_error(e, format!("Cannot remove file: {}", source.display())))
+        }
+        Err(e) => Err(map_io_error(
+            e,
+            format!("Cannot move file: {}", source.display()),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -417,5 +443,43 @@ mod tests {
             &relative_into_package,
             &package_dir
         ));
+    }
+
+    #[test]
+    fn test_move_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let dest = temp_dir.path().join("nested/dir/dest.txt");
+        fs::write(&source, "content").unwrap();
+
+        move_file(&source, &dest).unwrap();
+
+        assert!(!source.exists());
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "content");
+    }
+
+    #[test]
+    fn test_move_file_across_filesystems() {
+        use std::os::unix::fs::MetadataExt;
+
+        // /dev/shm is usually a separate tmpfs mount, where rename fails with EXDEV
+        let Ok(other_fs) = TempDir::new_in("/dev/shm") else {
+            return;
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("source.txt");
+        let dest = other_fs.path().join("dest.txt");
+        fs::write(&source, "content").unwrap();
+
+        let same_device = fs::metadata(temp_dir.path()).unwrap().dev()
+            == fs::metadata(other_fs.path()).unwrap().dev();
+        if same_device {
+            return;
+        }
+
+        move_file(&source, &dest).unwrap();
+
+        assert!(!source.exists());
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "content");
     }
 }
