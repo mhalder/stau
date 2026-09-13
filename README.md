@@ -219,7 +219,9 @@ Summary: 1 installed, 0 not installed, 0 broken
 
 ### `stau clean <package>` (alias: `c`)
 
-Removes broken symlinks for a package. Useful when source files have been deleted or moved.
+Removes broken symlinks that point into a package, such as links left behind after files were deleted from or moved within the package. Broken symlinks that point elsewhere are never removed.
+
+Only target directories that mirror a directory still present in the package are scanned, so links below a directory removed from the package entirely must be cleaned up manually.
 
 ```bash
 stau clean ghostty                      # Remove broken symlinks

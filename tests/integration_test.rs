@@ -2212,3 +2212,73 @@ fn test_install_conflict_creates_no_symlinks() {
     }
     assert!(!target_dir.join(".config").exists());
 }
+
+#[test]
+fn test_clean_removes_only_stale_package_symlinks() {
+    use std::os::unix::fs as unix_fs;
+
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    create_test_package(
+        &stau_dir,
+        "vim",
+        &[
+            ".vimrc",
+            ".gvimrc",
+            ".vim/colors/theme.vim",
+            ".vim/plugin.vim",
+        ],
+    );
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    assert!(run(&["install", "vim"]).status.success());
+
+    // Files removed from the package leave stale stau symlinks behind
+    fs::remove_file(stau_dir.join("vim/.gvimrc")).unwrap();
+    fs::remove_file(stau_dir.join("vim/.vim/plugin.vim")).unwrap();
+
+    // Broken symlinks owned by the user must never be touched
+    fs::remove_file(target_dir.join(".vimrc")).unwrap();
+    unix_fs::symlink("/nonexistent/user-link", target_dir.join(".vimrc")).unwrap();
+    unix_fs::symlink("/nonexistent/other", target_dir.join(".other")).unwrap();
+
+    let status = run(&["status", "vim"]);
+    let stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(stdout.contains("2 broken"), "status: {stdout}");
+    assert!(stdout.contains("[conflict]"), "status: {stdout}");
+
+    let list = run(&["list"]);
+    let stdout = String::from_utf8_lossy(&list.stdout);
+    assert!(stdout.contains("(2 broken)"), "list: {stdout}");
+
+    let clean = run(&["clean", "vim"]);
+    assert!(clean.status.success(), "clean: {clean:?}");
+    let stdout = String::from_utf8_lossy(&clean.stdout);
+    assert!(
+        stdout.contains("Cleaned 2 broken symlink(s)"),
+        "clean: {stdout}"
+    );
+
+    assert!(target_dir.join(".gvimrc").symlink_metadata().is_err());
+    assert!(
+        target_dir
+            .join(".vim/plugin.vim")
+            .symlink_metadata()
+            .is_err()
+    );
+    assert!(target_dir.join(".vimrc").is_symlink(), "user link removed");
+    assert!(target_dir.join(".other").is_symlink(), "user link removed");
+    assert!(target_dir.join(".vim/colors/theme.vim").is_symlink());
+}

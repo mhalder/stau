@@ -728,40 +728,39 @@ struct PackageStatus {
 }
 
 fn print_package_status(config: &Config, target_dir: &Path, pkg: &str) {
-    let package_dir = config.get_package_dir(pkg);
-
-    match package::discover_package_files(&package_dir, target_dir) {
-        Ok(mappings) => print_package_status_from_mappings(pkg, &mappings),
+    match package_status(&config.get_package_dir(pkg), target_dir) {
+        Ok(status) => print_package_status_line(pkg, &status),
         Err(e) => println!("  {:<20} [error: {}]", pkg, e),
     }
 }
 
-fn print_package_status_from_mappings(pkg: &str, mappings: &[symlink::SymlinkMapping]) {
-    let status = package_status(mappings);
+fn print_package_status_line(pkg: &str, status: &PackageStatus) {
+    let broken = if status.broken_count > 0 {
+        format!("  ({} broken)", status.broken_count)
+    } else {
+        String::new()
+    };
 
     if status.installed_count == 0 {
-        println!("  {:<20} [not installed]", pkg);
-    } else if status.broken_count > 0 {
-        println!(
-            "  {:<20} [installed]  {} symlinks  ({} broken)",
-            pkg, status.installed_count, status.broken_count
-        );
+        println!("  {:<20} [not installed]{}", pkg, broken);
     } else if status.installed_count == status.total_count {
         println!(
-            "  {:<20} [installed]  {} symlink{}",
+            "  {:<20} [installed]  {} symlink{}{}",
             pkg,
             status.installed_count,
-            plural_suffix(status.installed_count)
+            plural_suffix(status.installed_count),
+            broken
         );
     } else {
         println!(
-            "  {:<20} [partial]    {}/{} symlinks",
-            pkg, status.installed_count, status.total_count
+            "  {:<20} [partial]    {}/{} symlinks{}",
+            pkg, status.installed_count, status.total_count, broken
         );
     }
 }
 
-fn package_status(mappings: &[symlink::SymlinkMapping]) -> PackageStatus {
+fn package_status(package_dir: &Path, target_dir: &Path) -> Result<PackageStatus> {
+    let mappings = package::discover_package_files(package_dir, target_dir)?;
     let installed_count = mappings
         .iter()
         .filter(|mapping| {
@@ -771,16 +770,12 @@ fn package_status(mappings: &[symlink::SymlinkMapping]) -> PackageStatus {
             )
         })
         .count();
-    let broken_count = mappings
-        .iter()
-        .filter(|mapping| symlink::is_broken_symlink(&mapping.target))
-        .count();
 
-    PackageStatus {
+    Ok(PackageStatus {
         total_count: mappings.len(),
         installed_count,
-        broken_count,
-    }
+        broken_count: package::discover_broken_symlinks(package_dir, target_dir)?.len(),
+    })
 }
 
 fn plural_suffix(count: usize) -> &'static str {
@@ -932,8 +927,9 @@ fn show_status(config: &Config, package: &str, target: Option<PathBuf>) -> Resul
 
     // Get all mappings
     let mappings = package::discover_package_files(&package_dir, &target_dir)?;
+    let broken = package::discover_broken_symlinks(&package_dir, &target_dir)?;
 
-    if mappings.is_empty() {
+    if mappings.is_empty() && broken.is_empty() {
         println!("\nNo files in package.");
         return Ok(());
     }
@@ -942,19 +938,15 @@ fn show_status(config: &Config, package: &str, target: Option<PathBuf>) -> Resul
 
     let mut installed = 0;
     let mut not_installed = 0;
-    let mut broken = 0;
 
     for mapping in &mappings {
-        let is_our_link = symlink::is_stau_symlink(&mapping.target, &mapping.source)?;
-        let is_broken = symlink::is_broken_symlink(&mapping.target);
-
-        let status = if is_broken {
-            broken += 1;
+        let status = if broken.contains(&mapping.target) {
             "[BROKEN]"
-        } else if is_our_link {
+        } else if symlink::is_stau_symlink(&mapping.target, &mapping.source)? {
             installed += 1;
             "[installed]"
-        } else if mapping.target.exists() {
+        } else if mapping.target.symlink_metadata().is_ok() {
+            // Includes dangling symlinks that do not point into the package
             not_installed += 1;
             "[conflict]"
         } else {
@@ -965,10 +957,20 @@ fn show_status(config: &Config, package: &str, target: Option<PathBuf>) -> Resul
         println!("  {:<20} {}", status, mapping.target.display());
     }
 
+    // Broken symlinks to files that were removed from the package
+    for path in broken
+        .iter()
+        .filter(|path| !mappings.iter().any(|mapping| mapping.target == **path))
+    {
+        println!("  {:<20} {}", "[BROKEN]", path.display());
+    }
+
     println!();
     println!(
         "Summary: {} installed, {} not installed, {} broken",
-        installed, not_installed, broken
+        installed,
+        not_installed,
+        broken.len()
     );
 
     Ok(())
@@ -991,34 +993,27 @@ fn clean_broken_symlinks(
         return Err(error::StauError::PackageNotFound(package.to_string()));
     }
 
-    let mappings = package::discover_package_files(&package_dir, &target_dir)?;
-    let mut cleaned = 0;
+    let broken = package::discover_broken_symlinks(&package_dir, &target_dir)?;
 
-    for mapping in &mappings {
-        if symlink::is_broken_symlink(&mapping.target) {
-            if verbose || dry_run {
-                println!("  Removing broken symlink: {}", mapping.target.display());
-            }
+    for path in &broken {
+        if verbose || dry_run {
+            println!("  Removing broken symlink: {}", path.display());
+        }
 
-            if !dry_run {
-                fs::remove_file(&mapping.target).map_err(|e| {
-                    map_io_error(
-                        e,
-                        format!("Cannot remove symlink: {}", mapping.target.display()),
-                    )
-                })?;
-            }
-
-            cleaned += 1;
+        if !dry_run {
+            fs::remove_file(path).map_err(|e| {
+                map_io_error(e, format!("Cannot remove symlink: {}", path.display()))
+            })?;
         }
     }
 
-    if cleaned == 0 {
+    if broken.is_empty() {
         println!("No broken symlinks found for package '{}'", package);
     } else if !dry_run {
         println!(
             "Cleaned {} broken symlink(s) for package '{}'",
-            cleaned, package
+            broken.len(),
+            package
         );
     }
 

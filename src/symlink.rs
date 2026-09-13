@@ -56,6 +56,43 @@ pub fn is_broken_symlink(path: &Path) -> bool {
     false
 }
 
+/// Checks if a path is a broken symlink pointing into `package_dir`.
+///
+/// Relative link targets are resolved against the symlink's parent directory.
+/// Broken symlinks pointing elsewhere are not stau-managed and return `false`.
+pub fn is_broken_package_symlink(path: &Path, package_dir: &Path) -> bool {
+    if !is_broken_symlink(path) {
+        return false;
+    }
+
+    let Ok(link_target) = fs::read_link(path) else {
+        return false;
+    };
+
+    let resolved = match path.parent() {
+        Some(parent) if link_target.is_relative() => normalize_lexically(&parent.join(link_target)),
+        _ => link_target,
+    };
+    resolved.starts_with(package_dir)
+}
+
+/// Resolves `.` and `..` components without touching the filesystem.
+fn normalize_lexically(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other),
+        }
+    }
+    normalized
+}
+
 /// Creates a symlink at `target` pointing to `source`, creating parent directories as needed.
 ///
 /// If the symlink already exists and points to the correct source, this is a no-op.
@@ -347,5 +384,38 @@ mod tests {
 
         assert_eq!(mapping1, mapping2);
         assert_ne!(mapping1, mapping3);
+    }
+
+    #[test]
+    fn test_is_broken_package_symlink() {
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = temp_dir.path().join("pkg");
+        let target_dir = temp_dir.path().join("home");
+        fs::create_dir_all(&package_dir).unwrap();
+        fs::create_dir_all(&target_dir).unwrap();
+
+        let existing = package_dir.join("existing");
+        File::create(&existing).unwrap();
+
+        let into_package = target_dir.join("into_package");
+        unix_fs::symlink(package_dir.join("removed"), &into_package).unwrap();
+
+        let relative_into_package = target_dir.join("relative");
+        unix_fs::symlink("../pkg/removed", &relative_into_package).unwrap();
+
+        let elsewhere = target_dir.join("elsewhere");
+        unix_fs::symlink("/nonexistent/file", &elsewhere).unwrap();
+
+        let valid = target_dir.join("valid");
+        unix_fs::symlink(&existing, &valid).unwrap();
+
+        assert!(is_broken_package_symlink(&into_package, &package_dir));
+        assert!(!is_broken_package_symlink(&elsewhere, &package_dir));
+        assert!(!is_broken_package_symlink(&valid, &package_dir));
+        assert!(!is_broken_package_symlink(&existing, &package_dir));
+        assert!(is_broken_package_symlink(
+            &relative_into_package,
+            &package_dir
+        ));
     }
 }

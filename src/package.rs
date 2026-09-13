@@ -1,7 +1,8 @@
 use crate::error::{Result, StauError, map_io_error};
-use crate::symlink::SymlinkMapping;
+use crate::symlink::{self, SymlinkMapping};
 use std::fs;
-use std::path::Path;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 
 /// Walks a package directory and generates symlink mappings for all files.
 ///
@@ -23,18 +24,76 @@ pub fn discover_package_files(
     }
 
     let mut mappings = Vec::new();
-    walk_directory(package_dir, package_dir, target_dir, &mut mappings)?;
+    walk_directory(
+        package_dir,
+        package_dir,
+        target_dir,
+        &mut mappings,
+        &mut Vec::new(),
+    )?;
     // read_dir order is filesystem-dependent; sort for deterministic output
     mappings.sort_by(|a, b| a.target.cmp(&b.target));
     Ok(mappings)
 }
 
-/// Recursively walk a directory and build symlink mappings
+/// Finds broken symlinks in the target directory that point into the package.
+///
+/// These are left behind when files are removed from a package after it was
+/// installed. Only target directories mirroring a directory that still exists in
+/// the package are scanned, so links below a directory removed from the package
+/// are not found.
+pub fn discover_broken_symlinks(package_dir: &Path, target_dir: &Path) -> Result<Vec<PathBuf>> {
+    if !package_dir.is_dir() {
+        return Err(StauError::PackageNotFound(
+            package_dir.display().to_string(),
+        ));
+    }
+
+    let mut dirs = vec![PathBuf::new()];
+    walk_directory(
+        package_dir,
+        package_dir,
+        target_dir,
+        &mut Vec::new(),
+        &mut dirs,
+    )?;
+
+    let mut broken = Vec::new();
+    for rel_dir in dirs {
+        let dir = target_dir.join(rel_dir);
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
+                continue;
+            }
+            Err(e) => {
+                return Err(map_io_error(
+                    e,
+                    format!("Cannot read directory: {}", dir.display()),
+                ));
+            }
+        };
+
+        for entry in entries {
+            let path = entry.map_err(StauError::Io)?.path();
+            if symlink::is_broken_package_symlink(&path, package_dir) {
+                broken.push(path);
+            }
+        }
+    }
+
+    broken.sort();
+    Ok(broken)
+}
+
+/// Recursively walk a directory, collecting symlink mappings for files and the
+/// paths of subdirectories relative to the package root
 fn walk_directory(
     base_dir: &Path,
     current_dir: &Path,
     target_dir: &Path,
     mappings: &mut Vec<SymlinkMapping>,
+    dirs: &mut Vec<PathBuf>,
 ) -> Result<()> {
     let entries = fs::read_dir(current_dir).map_err(|e| {
         map_io_error(
@@ -66,21 +125,26 @@ fn walk_directory(
 
         let metadata = entry.metadata().map_err(StauError::Io)?;
 
+        // Skip symlinks and other special files
+        if !metadata.is_dir() && !metadata.is_file() {
+            continue;
+        }
+
+        // Calculate relative path from package base
+        let rel_path = path
+            .strip_prefix(base_dir)
+            .map_err(|_| StauError::InvalidPath(path.clone()))?
+            .to_path_buf();
+
         if metadata.is_dir() {
             // Recursively walk subdirectories
-            walk_directory(base_dir, &path, target_dir, mappings)?;
-        } else if metadata.is_file() {
-            // Calculate relative path from package base
-            let rel_path = path
-                .strip_prefix(base_dir)
-                .map_err(|_| StauError::InvalidPath(path.clone()))?;
-
+            walk_directory(base_dir, &path, target_dir, mappings, dirs)?;
+            dirs.push(rel_path);
+        } else {
             // Target path is target_dir + relative path
-            let target_path = target_dir.join(rel_path);
-
+            let target_path = target_dir.join(&rel_path);
             mappings.push(SymlinkMapping::new(path, target_path));
         }
-        // Skip symlinks and other special files
     }
 
     Ok(())
@@ -236,6 +300,59 @@ mod tests {
         let result = discover_package_files(&package_dir, &target_dir);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), StauError::PackageNotFound(_)));
+    }
+
+    #[test]
+    fn test_discover_broken_symlinks() {
+        use std::os::unix::fs as unix_fs;
+
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = temp_dir.path().join("pkg");
+        let target_dir = temp_dir.path().join("home");
+
+        fs::create_dir_all(package_dir.join(".config/app")).unwrap();
+        fs::create_dir_all(target_dir.join(".config/app")).unwrap();
+        File::create(package_dir.join(".config/app/kept")).unwrap();
+
+        // Stale links to files removed from the package, at root and nested
+        unix_fs::symlink(
+            package_dir.join(".removedrc"),
+            target_dir.join(".removedrc"),
+        )
+        .unwrap();
+        unix_fs::symlink(
+            package_dir.join(".config/app/removed"),
+            target_dir.join(".config/app/removed"),
+        )
+        .unwrap();
+        // A valid link and an unrelated broken link are not reported
+        unix_fs::symlink(
+            package_dir.join(".config/app/kept"),
+            target_dir.join(".config/app/kept"),
+        )
+        .unwrap();
+        unix_fs::symlink("/nonexistent", target_dir.join(".config/app/other")).unwrap();
+
+        let broken = discover_broken_symlinks(&package_dir, &target_dir).unwrap();
+
+        assert_eq!(
+            broken,
+            vec![
+                target_dir.join(".config/app/removed"),
+                target_dir.join(".removedrc"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_discover_broken_symlinks_missing_target() {
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = temp_dir.path().join("pkg");
+        fs::create_dir_all(package_dir.join(".config")).unwrap();
+
+        let broken =
+            discover_broken_symlinks(&package_dir, &temp_dir.path().join("missing")).unwrap();
+        assert!(broken.is_empty());
     }
 
     #[test]
