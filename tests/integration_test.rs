@@ -2127,3 +2127,32 @@ fn test_uninstall_all_verbose() {
     assert!(stdout.contains("--- Uninstalling package:"));
     assert!(stdout.contains("Package directory:") || stdout.contains("STAU_DIR:"));
 }
+
+// =============================================================================
+// Review regression tests
+// =============================================================================
+
+#[test]
+fn test_install_with_relative_stau_dir_creates_valid_symlinks() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    let output = Command::new(stau_binary())
+        .current_dir(temp_dir.path())
+        .env("STAU_DIR", "dotfiles")
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Install failed: {:?}", output);
+    let link = target_dir.join(".vimrc");
+    assert!(link.is_symlink());
+    assert!(link.exists(), "Symlink must resolve to the package file");
+    assert!(fs::read_link(&link).unwrap().is_absolute());
+}

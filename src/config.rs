@@ -33,11 +33,12 @@ impl Config {
     fn get_stau_dir() -> Result<PathBuf> {
         if let Ok(dir) = env::var("STAU_DIR") {
             let path = PathBuf::from(dir);
-            if path.exists() {
-                Ok(path)
-            } else {
-                Err(StauError::StauDirNotFound(path))
+            if !path.exists() {
+                return Err(StauError::StauDirNotFound(path));
             }
+            // Symlink targets are resolved relative to the link's directory, so a
+            // relative STAU_DIR would produce broken links.
+            std::path::absolute(&path).map_err(StauError::Io)
         } else {
             let home = Self::get_home_dir()?;
 
