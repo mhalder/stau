@@ -783,6 +783,9 @@ fn plural_suffix(count: usize) -> &'static str {
 }
 
 /// Adopts existing files into a package by moving them to the package directory and creating symlinks.
+///
+/// Every file is checked before any is moved, so a conflict does not leave the
+/// package partially adopted.
 fn adopt_files(
     config: &Config,
     package: &str,
@@ -794,21 +797,42 @@ fn adopt_files(
     let target_dir = config.get_target(target);
     let package_dir = config.get_package_dir(package);
 
-    ensure_package_dir(&package_dir, dry_run, verbose)?;
     println!(
         "Adopting {} file(s) into package '{}':",
         files.len(),
         package
     );
 
+    let mut adoptions: Vec<(PathBuf, PathBuf)> = Vec::new();
     for file_path in files {
-        adopt_file(file_path, &target_dir, &package_dir, dry_run, verbose)?;
+        if let Some(adoption) = adopt_destination(file_path, &target_dir, &package_dir)?
+            && !adoptions.iter().any(|(_, dest)| *dest == adoption.1)
+        {
+            adoptions.push(adoption);
+        }
+    }
+
+    if adoptions.is_empty() {
+        println!("No files adopted into '{}'", package);
+        return Ok(());
+    }
+
+    ensure_package_dir(&package_dir, dry_run, verbose)?;
+
+    for (file_path, dest) in &adoptions {
+        if verbose || dry_run {
+            println!("  {} -> {}", file_path.display(), dest.display());
+        }
+
+        if !dry_run {
+            move_file_into_package(file_path, dest)?;
+        }
     }
 
     if !dry_run {
         println!(
             "Successfully adopted {} file(s) into '{}'",
-            files.len(),
+            adoptions.len(),
             package
         );
     }
@@ -839,39 +863,40 @@ fn ensure_package_dir(package_dir: &Path, dry_run: bool, verbose: bool) -> Resul
     Ok(())
 }
 
-fn adopt_file(
-    file_path: &Path,
-    target_dir: &Path,
-    package_dir: &Path,
-    dry_run: bool,
-    verbose: bool,
-) -> Result<()> {
-    let Some(dest) = adopt_destination(file_path, target_dir, package_dir)? else {
-        return Ok(());
-    };
-
-    if verbose || dry_run {
-        println!("  {} -> {}", file_path.display(), dest.display());
-    }
-
-    if !dry_run {
-        move_file_into_package(file_path, &dest)?;
-    }
-
-    Ok(())
-}
-
+/// Resolves where a file will be adopted to, returning `(absolute file path, destination)`.
+///
+/// Relative paths are resolved against the current directory. Missing files, files outside
+/// the target directory, directories, and symlinks are skipped with a warning.
 fn adopt_destination(
     file_path: &Path,
     target_dir: &Path,
     package_dir: &Path,
-) -> Result<Option<PathBuf>> {
-    if !file_path.exists() {
+) -> Result<Option<(PathBuf, PathBuf)>> {
+    let file_path = std::path::absolute(file_path).map_err(error::StauError::Io)?;
+    let target_dir = std::path::absolute(target_dir).map_err(error::StauError::Io)?;
+
+    let Ok(metadata) = file_path.symlink_metadata() else {
         eprintln!("Warning: File does not exist: {}", file_path.display());
+        return Ok(None);
+    };
+
+    if !metadata.is_file() {
+        let kind = if metadata.is_dir() {
+            "a directory"
+        } else if metadata.is_symlink() {
+            "a symlink"
+        } else {
+            "a special file"
+        };
+        eprintln!(
+            "Warning: Skipping {} ({}); only regular files can be adopted",
+            file_path.display(),
+            kind
+        );
         return Ok(None);
     }
 
-    let Ok(rel_path) = file_path.strip_prefix(target_dir) else {
+    let Ok(rel_path) = file_path.strip_prefix(&target_dir) else {
         eprintln!(
             "Warning: File {} is not in target directory {}",
             file_path.display(),
@@ -881,11 +906,11 @@ fn adopt_destination(
     };
 
     let dest = package_dir.join(rel_path);
-    if dest.exists() {
+    if dest.symlink_metadata().is_ok() {
         return Err(error::StauError::ConflictingFile(dest));
     }
 
-    Ok(Some(dest))
+    Ok(Some((file_path, dest)))
 }
 
 fn move_file_into_package(file_path: &Path, dest: &Path) -> Result<()> {

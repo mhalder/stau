@@ -150,6 +150,8 @@ stau restow ghostty --dry-run           # Preview changes
 
 Moves existing files from your home directory into the dotfiles repository and replaces them with symlinks. Creates the package directory if it doesn't exist.
 
+Paths may be absolute or relative to the current directory, and must be inside the target directory. Only regular files can be adopted: directories and symlinks are skipped with a warning, so adopt the files inside a directory individually. All files are checked for conflicts before any file is moved.
+
 ```bash
 stau adopt ghostty ~/.config/ghostty/config  # Adopt config file
 stau adopt git ~/.gitconfig                  # Adopt single file

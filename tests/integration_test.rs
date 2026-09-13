@@ -2282,3 +2282,95 @@ fn test_clean_removes_only_stale_package_symlinks() {
     assert!(target_dir.join(".other").is_symlink(), "user link removed");
     assert!(target_dir.join(".vim/colors/theme.vim").is_symlink());
 }
+
+#[test]
+fn test_adopt_relative_path() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::write(target_dir.join(".bashrc"), "echo 'hello'").unwrap();
+
+    let output = Command::new(stau_binary())
+        .current_dir(&target_dir)
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["adopt", "bash", ".bashrc"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Adopt failed: {:?}", output);
+    let link = target_dir.join(".bashrc");
+    assert!(link.is_symlink(), "File should be a symlink");
+    assert_eq!(fs::read_to_string(&link).unwrap(), "echo 'hello'");
+    assert!(stau_dir.join("bash/.bashrc").is_file());
+}
+
+#[test]
+fn test_adopt_skips_directories_and_symlinks() {
+    use std::os::unix::fs as unix_fs;
+
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir_all(target_dir.join(".config/app")).unwrap();
+    fs::write(target_dir.join(".config/app/conf"), "x").unwrap();
+    unix_fs::symlink("/etc/hostname", target_dir.join(".link")).unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args([
+            "adopt",
+            "app",
+            target_dir.join(".config/app").to_str().unwrap(),
+            target_dir.join(".link").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Adopt failed: {:?}", output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("No files adopted"), "stdout: {stdout}");
+    assert!(stderr.contains("a directory"), "stderr: {stderr}");
+    assert!(stderr.contains("a symlink"), "stderr: {stderr}");
+
+    assert!(!target_dir.join(".config/app").is_symlink());
+    assert!(target_dir.join(".config/app/conf").is_file());
+    assert!(!stau_dir.join("app").exists());
+}
+
+#[test]
+fn test_adopt_conflict_moves_nothing() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    create_test_package(&stau_dir, "pkg", &[".b"]);
+    fs::write(target_dir.join(".a"), "a").unwrap();
+    fs::write(target_dir.join(".b"), "b").unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args([
+            "adopt",
+            "pkg",
+            target_dir.join(".a").to_str().unwrap(),
+            target_dir.join(".b").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(!target_dir.join(".a").is_symlink(), ".a must not be moved");
+    assert_eq!(fs::read_to_string(target_dir.join(".a")).unwrap(), "a");
+    assert!(!stau_dir.join("pkg/.a").exists());
+}
