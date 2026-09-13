@@ -46,17 +46,17 @@ fn walk_directory(
         let path = entry.path();
         let file_name = entry.file_name();
 
-        // Skip setup.sh and teardown.sh scripts
-        if file_name == "setup.sh" || file_name == "teardown.sh" {
-            continue;
-        }
-
-        // Skip version control files/directories in root of package
+        // Skip package scripts and version control files in root of package
         let file_name_str = file_name.to_string_lossy();
         if current_dir == base_dir
             && matches!(
                 file_name_str.as_ref(),
-                ".git" | ".gitignore" | ".gitattributes" | ".gitmodules"
+                "setup.sh"
+                    | "teardown.sh"
+                    | ".git"
+                    | ".gitignore"
+                    | ".gitattributes"
+                    | ".gitmodules"
             )
         {
             continue;
@@ -234,5 +234,38 @@ mod tests {
         let result = discover_package_files(&package_dir, &target_dir);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), StauError::PackageNotFound(_)));
+    }
+
+    #[test]
+    fn test_nested_script_names_are_linked() {
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = temp_dir.path().join("test_package");
+        let target_dir = temp_dir.path().join("target");
+
+        fs::create_dir_all(package_dir.join(".local/bin")).unwrap();
+        fs::create_dir_all(package_dir.join("sub")).unwrap();
+        File::create(package_dir.join("setup.sh")).unwrap();
+        File::create(package_dir.join(".local/bin/setup.sh")).unwrap();
+        File::create(package_dir.join(".local/bin/teardown.sh")).unwrap();
+        File::create(package_dir.join("sub/.gitignore")).unwrap();
+
+        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
+
+        assert_eq!(mappings.len(), 3);
+        assert!(
+            !mappings
+                .iter()
+                .any(|m| m.target == target_dir.join("setup.sh"))
+        );
+        assert!(
+            mappings
+                .iter()
+                .any(|m| m.target == target_dir.join(".local/bin/setup.sh"))
+        );
+        assert!(
+            mappings
+                .iter()
+                .any(|m| m.target == target_dir.join("sub/.gitignore"))
+        );
     }
 }

@@ -344,10 +344,12 @@ These options work with all commands:
 
 ## Ignored Files
 
-stau automatically ignores these files in package directories:
+stau automatically ignores these files at the package root:
 
 - `setup.sh` and `teardown.sh` (script files)
-- `.git`, `.gitignore`, `.gitattributes`, `.gitmodules` (version control, at package root only)
+- `.git`, `.gitignore`, `.gitattributes`, `.gitmodules` (version control)
+
+Files with these names in subdirectories (for example `.local/bin/setup.sh`) are linked normally.
 
 ## Tips and Best Practices
 
