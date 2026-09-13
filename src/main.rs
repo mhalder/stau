@@ -135,6 +135,22 @@ enum Commands {
     },
 }
 
+impl Commands {
+    /// Returns the package name given on the command line, if any.
+    fn package(&self) -> Option<&str> {
+        match self {
+            Commands::Install { package, .. } | Commands::Uninstall { package, .. } => {
+                package.as_deref()
+            }
+            Commands::Restow { package, .. }
+            | Commands::Adopt { package, .. }
+            | Commands::Status { package, .. }
+            | Commands::Clean { package, .. } => Some(package),
+            Commands::List { .. } => None,
+        }
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -164,6 +180,10 @@ fn dispatch_command(
     dry_run: bool,
     verbose: bool,
 ) -> Result<()> {
+    if let Some(package) = command.package() {
+        Config::validate_package_name(package)?;
+    }
+
     match command {
         Commands::Install {
             package,

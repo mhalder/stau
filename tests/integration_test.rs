@@ -2156,3 +2156,29 @@ fn test_install_with_relative_stau_dir_creates_valid_symlinks() {
     assert!(link.exists(), "Symlink must resolve to the package file");
     assert!(fs::read_link(&link).unwrap().is_absolute());
 }
+
+#[test]
+fn test_package_name_outside_stau_dir_is_rejected() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    create_test_package(temp_dir.path(), "outside", &[".evilrc"]);
+
+    for package in ["../outside", "/etc", "vim/nested", ".."] {
+        let output = Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .args(["install", package])
+            .output()
+            .unwrap();
+
+        assert_eq!(output.status.code(), Some(1), "package {package:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("Invalid package name"), "stderr: {stderr}");
+    }
+
+    assert!(fs::read_dir(&target_dir).unwrap().next().is_none());
+}

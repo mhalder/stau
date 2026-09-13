@@ -89,6 +89,23 @@ impl Config {
         override_target.unwrap_or_else(|| self.default_target.clone())
     }
 
+    /// Validates that a package name is a single directory name inside STAU_DIR.
+    ///
+    /// Rejects names such as `..`, `../other`, `a/b`, or absolute paths, which would
+    /// otherwise resolve outside STAU_DIR when joined.
+    pub fn validate_package_name(package: &str) -> Result<()> {
+        use std::path::{Component, Path};
+
+        let mut components = Path::new(package).components();
+        match (components.next(), components.next()) {
+            (Some(Component::Normal(_)), None) => Ok(()),
+            _ => Err(StauError::InvalidArguments(format!(
+                "Invalid package name '{}': must be a single directory name inside STAU_DIR",
+                package
+            ))),
+        }
+    }
+
     /// Gets the full path to a package directory within STAU_DIR.
     pub fn get_package_dir(&self, package: &str) -> PathBuf {
         self.stau_dir.join(package)
@@ -354,5 +371,25 @@ mod tests {
                 assert_eq!(config.stau_dir, legacy_dotfiles);
             },
         );
+    }
+
+    #[test]
+    fn test_validate_package_name() {
+        for valid in ["vim", ".hidden", "nvim-config", "vim/"] {
+            assert!(
+                Config::validate_package_name(valid).is_ok(),
+                "{valid:?} should be valid"
+            );
+        }
+
+        for invalid in ["", ".", "..", "../vim", "/etc", "a/b", "./vim"] {
+            assert!(
+                matches!(
+                    Config::validate_package_name(invalid),
+                    Err(StauError::InvalidArguments(_))
+                ),
+                "{invalid:?} should be rejected"
+            );
+        }
     }
 }
