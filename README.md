@@ -225,10 +225,11 @@ Summary: 1 installed, 0 not installed, 0 broken
 
 Removes broken symlinks that point into a package, such as links left behind after files were deleted from or moved within the package. Broken symlinks that point elsewhere are never removed.
 
-Only target directories that mirror a directory still present in the package are scanned, so links below a directory removed from the package entirely must be cleaned up manually.
+By default, only target directories that mirror a directory still present in the package are scanned, which is fast. Links below a directory removed from the package entirely are found only with `--deep`, which walks the whole target directory tree without following symlinked directories, and can be slow for a large home directory.
 
 ```bash
 stau clean ghostty                      # Remove broken symlinks
+stau clean ghostty --deep               # Also find links below removed directories
 stau clean ghostty --dry-run            # Preview what would be removed
 stau clean ghostty --verbose            # Show each symlink being removed
 ```
@@ -236,6 +237,7 @@ stau clean ghostty --verbose            # Show each symlink being removed
 **Options:**
 | Flag | Description |
 |------|-------------|
+| `--deep` | Scan the whole target directory tree |
 | `-t, --target <DIR>` | Target directory |
 | `-n, --dry-run` | Show what would be done without making changes |
 | `-v, --verbose` | Show detailed output |

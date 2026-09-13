@@ -2573,3 +2573,43 @@ fn test_uninstall_restores_symlink_when_copy_back_fails() {
     assert!(!target_dir.join(".a").is_symlink());
     assert!(target_dir.join(".a").is_file());
 }
+
+#[test]
+fn test_clean_deep_finds_links_below_removed_directories() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    create_test_package(&stau_dir, "app", &[".apprc", ".config/app/old/settings"]);
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    assert!(run(&["install", "app"]).status.success());
+
+    // Remove a whole directory from the package after installing it
+    fs::remove_dir_all(stau_dir.join("app/.config")).unwrap();
+    let stale = target_dir.join(".config/app/old/settings");
+
+    let plain = run(&["clean", "app"]);
+    assert!(plain.status.success(), "clean: {plain:?}");
+    assert!(stale.is_symlink(), "plain clean does not scan removed dirs");
+
+    let dry_run = run(&["clean", "app", "--deep", "--dry-run"]);
+    assert!(dry_run.status.success(), "clean --deep -n: {dry_run:?}");
+    let stdout = String::from_utf8_lossy(&dry_run.stdout);
+    assert!(stdout.contains(stale.to_str().unwrap()), "stdout: {stdout}");
+    assert!(stale.is_symlink(), "dry run must not remove the link");
+
+    let deep = run(&["clean", "app", "--deep"]);
+    assert!(deep.status.success(), "clean --deep: {deep:?}");
+    assert!(stale.symlink_metadata().is_err(), "stale link removed");
+    assert!(target_dir.join(".apprc").is_symlink());
+}

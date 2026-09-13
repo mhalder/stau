@@ -132,6 +132,10 @@ enum Commands {
         /// Target directory to clean (default: $HOME or $STAU_TARGET)
         #[arg(short, long, env = "STAU_TARGET")]
         target: Option<PathBuf>,
+
+        /// Scan the whole target directory tree, also finding links below directories removed from the package (slower)
+        #[arg(long)]
+        deep: bool,
     },
 }
 
@@ -218,9 +222,11 @@ fn dispatch_command(
         } => adopt_files(config, &package, &files, target, dry_run, verbose),
         Commands::List { target } => list_packages(config, target),
         Commands::Status { package, target } => show_status(config, &package, target),
-        Commands::Clean { package, target } => {
-            clean_broken_symlinks(config, &package, target, dry_run, verbose)
-        }
+        Commands::Clean {
+            package,
+            target,
+            deep,
+        } => clean_broken_symlinks(config, &package, target, deep, dry_run, verbose),
     }
 }
 
@@ -1033,11 +1039,15 @@ fn show_status(config: &Config, package: &str, target: Option<PathBuf>) -> Resul
     Ok(())
 }
 
-/// Removes broken symlinks for a package.
+/// Removes broken symlinks that point into a package.
+///
+/// With `deep`, the whole target tree is scanned, which also finds links below
+/// directories removed from the package entirely.
 fn clean_broken_symlinks(
     config: &Config,
     package: &str,
     target: Option<PathBuf>,
+    deep: bool,
     dry_run: bool,
     verbose: bool,
 ) -> Result<()> {
@@ -1050,7 +1060,11 @@ fn clean_broken_symlinks(
         return Err(error::StauError::PackageNotFound(package.to_string()));
     }
 
-    let broken = package::discover_broken_symlinks(&package_dir, &target_dir)?;
+    let broken = if deep {
+        package::discover_broken_symlinks_deep(&package_dir, &target_dir)?
+    } else {
+        package::discover_broken_symlinks(&package_dir, &target_dir)?
+    };
 
     for path in &broken {
         if verbose || dry_run {

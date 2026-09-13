@@ -86,6 +86,54 @@ pub fn discover_broken_symlinks(package_dir: &Path, target_dir: &Path) -> Result
     Ok(broken)
 }
 
+/// Finds broken symlinks pointing into the package anywhere below the target directory.
+///
+/// Unlike [`discover_broken_symlinks`], this also finds links below directories that
+/// were removed from the package entirely, at the cost of walking the whole target
+/// tree. Symlinked directories are not followed, the package directory itself is not
+/// entered, and directories that cannot be read are skipped.
+pub fn discover_broken_symlinks_deep(
+    package_dir: &Path,
+    target_dir: &Path,
+) -> Result<Vec<PathBuf>> {
+    if !package_dir.is_dir() {
+        return Err(StauError::PackageNotFound(
+            package_dir.display().to_string(),
+        ));
+    }
+
+    let mut broken = Vec::new();
+    let mut pending = vec![target_dir.to_path_buf()];
+
+    while let Some(dir) = pending.pop() {
+        // A directory we cannot read cannot hold links we could remove either
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // DirEntry::file_type does not follow symlinks
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+
+            if file_type.is_dir() {
+                if path != package_dir {
+                    pending.push(path);
+                }
+            } else if file_type.is_symlink()
+                && symlink::is_broken_package_symlink(&path, package_dir)
+            {
+                broken.push(path);
+            }
+        }
+    }
+
+    broken.sort();
+    Ok(broken)
+}
+
 /// Recursively walk a directory, collecting symlink mappings for files and the
 /// paths of subdirectories relative to the package root
 fn walk_directory(
@@ -341,6 +389,40 @@ mod tests {
                 target_dir.join(".config/app/removed"),
                 target_dir.join(".removedrc"),
             ]
+        );
+    }
+
+    #[test]
+    fn test_discover_broken_symlinks_deep() {
+        use std::os::unix::fs as unix_fs;
+
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = temp_dir.path().join("pkg");
+        let target_dir = temp_dir.path().join("home");
+        let outside_dir = temp_dir.path().join("outside");
+
+        fs::create_dir_all(package_dir.join(".config")).unwrap();
+        File::create(package_dir.join(".config/kept")).unwrap();
+        fs::create_dir_all(target_dir.join(".config/removed/deeper")).unwrap();
+        fs::create_dir_all(&outside_dir).unwrap();
+
+        // Stale link below a directory removed from the package entirely
+        let stale = target_dir.join(".config/removed/deeper/file");
+        unix_fs::symlink(package_dir.join(".config/removed/deeper/file"), &stale).unwrap();
+        // An unrelated broken link is not reported
+        unix_fs::symlink("/nonexistent", target_dir.join(".config/removed/other")).unwrap();
+        // Symlinked directories are not followed
+        unix_fs::symlink(package_dir.join("gone"), outside_dir.join("link")).unwrap();
+        unix_fs::symlink(&outside_dir, target_dir.join("linked-dir")).unwrap();
+
+        assert!(
+            discover_broken_symlinks(&package_dir, &target_dir)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            discover_broken_symlinks_deep(&package_dir, &target_dir).unwrap(),
+            vec![stale]
         );
     }
 
