@@ -339,6 +339,12 @@ fn install_package(
     if mappings.is_empty() {
         println!("No files to link in package '{}'", package);
     } else {
+        // Check every target for conflicts before creating any symlink, so a
+        // conflict does not leave the package partially installed
+        for mapping in &mappings {
+            symlink::create_symlink(&mapping.source, &mapping.target, true)?;
+        }
+
         // Create symlinks for all files
         for mapping in &mappings {
             if verbose || dry_run {

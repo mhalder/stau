@@ -2182,3 +2182,33 @@ fn test_package_name_outside_stau_dir_is_rejected() {
 
     assert!(fs::read_dir(&target_dir).unwrap().next().is_none());
 }
+
+#[test]
+fn test_install_conflict_creates_no_symlinks() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let files = [".a", ".b", ".c", ".d", ".e", ".f", ".config/x/y"];
+    create_test_package(&stau_dir, "pkg", &files);
+    fs::write(target_dir.join(".d"), "existing").unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "pkg"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    for file in files {
+        assert!(
+            !target_dir.join(file).is_symlink(),
+            "{file} must not be linked after a conflict"
+        );
+    }
+    assert!(!target_dir.join(".config").exists());
+}

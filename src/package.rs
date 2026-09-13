@@ -24,6 +24,8 @@ pub fn discover_package_files(
 
     let mut mappings = Vec::new();
     walk_directory(package_dir, package_dir, target_dir, &mut mappings)?;
+    // read_dir order is filesystem-dependent; sort for deterministic output
+    mappings.sort_by(|a, b| a.target.cmp(&b.target));
     Ok(mappings)
 }
 
