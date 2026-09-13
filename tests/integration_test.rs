@@ -2451,3 +2451,35 @@ fn test_dry_run_reports_scripts_without_verbose() {
 
     assert!(!marker_file.exists(), "Dry run must not execute scripts");
 }
+
+#[test]
+fn test_setup_script_with_missing_target_names_the_directory() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let missing_target = temp_dir.path().join("missing");
+
+    fs::create_dir(&stau_dir).unwrap();
+    let package_dir = stau_dir.join("pkg");
+    fs::create_dir(&package_dir).unwrap();
+    create_script(&package_dir.join("setup.sh"), "#!/bin/bash\ntrue\n");
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .args([
+            "install",
+            "pkg",
+            "--target",
+            missing_target.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Invalid path"), "stderr: {stderr}");
+    assert!(
+        stderr.contains(missing_target.to_str().unwrap()),
+        "stderr: {stderr}"
+    );
+    assert!(!stderr.contains("chmod"), "stderr: {stderr}");
+}

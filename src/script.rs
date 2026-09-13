@@ -26,6 +26,12 @@ pub fn execute_script(
         return Ok(());
     }
 
+    // Scripts run in the target directory; a missing directory would otherwise be
+    // reported as a misleading "Cannot execute script" error
+    if !target_dir.is_dir() {
+        return Err(StauError::InvalidPath(target_dir.to_path_buf()));
+    }
+
     if verbose {
         println!("Executing: {}", script_path.display());
     }
