@@ -337,7 +337,7 @@ stau uses specific exit codes to indicate different error conditions:
 | 1    | Package not found, STAU_DIR not found, invalid path, or general error |
 | 2    | Conflicting file exists                                               |
 | 3    | Permission denied or I/O error                                        |
-| 4    | Setup or teardown script failed                                       |
+| 4    | Setup script failed                                                   |
 
 With `--all`, every package is processed even if some fail. The command then exits with code 1 if any package failed.
 
