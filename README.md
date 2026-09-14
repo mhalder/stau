@@ -27,8 +27,7 @@ Traditional tools like GNU Stow excel at symlink management but lack automation 
 ```bash
 git clone https://github.com/mhalder/stau.git
 cd stau
-cargo build --release
-# Binary will be at target/release/stau
+cargo install --path .
 ```
 
 ## Quick Start
