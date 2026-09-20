@@ -14,6 +14,9 @@ pub struct ScriptOptions {
     pub non_interactive: bool,
     /// Kill the script after this long.
     pub timeout: Option<Duration>,
+    /// Redirect the script's stdout to stderr so `--json` output on stdout
+    /// stays machine-readable.
+    pub json: bool,
 }
 
 /// Parses a human duration such as `30s`, `5m`, `500ms`, or a bare number of seconds.
@@ -196,14 +199,39 @@ fn spawn_script(
         command.stdin(Stdio::null());
     }
 
+    if options.json {
+        redirect_stdout_to_stderr(&mut command)?;
+    }
+
     match options.timeout {
         Some(timeout) => run_with_timeout(command, timeout),
         None => command.status(),
     }
 }
 
-/// Runs a spawned command, killing it if it exceeds `timeout`.
+/// Duplicates stderr onto the command's stdout so the hook's own output lands
+/// on stderr and leaves stdout free for one machine-readable object.
+fn redirect_stdout_to_stderr(command: &mut Command) -> io::Result<()> {
+    use std::fs::File;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::io::FromRawFd;
+
+    let dup = unsafe { libc::dup(std::io::stderr().as_raw_fd()) };
+    if dup < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: dup is a newly owned file descriptor handed to File.
+    let file = unsafe { File::from_raw_fd(dup) };
+    command.stdout(Stdio::from(file));
+    Ok(())
+}
+
+/// Runs a spawned command in its own process group, killing the whole group if
+/// it exceeds `timeout` (a hook's grandchildren must not outlive it).
 fn run_with_timeout(mut command: Command, timeout: Duration) -> io::Result<ExitStatus> {
+    use std::os::unix::process::CommandExt;
+
+    command.process_group(0);
     let mut child = command.spawn()?;
     let start = Instant::now();
 
@@ -212,7 +240,7 @@ fn run_with_timeout(mut command: Command, timeout: Duration) -> io::Result<ExitS
             Some(status) => return Ok(status),
             None => {
                 if start.elapsed() >= timeout {
-                    let _ = child.kill();
+                    terminate_process_group(child.id(), Duration::from_millis(500));
                     let _ = child.wait();
                     return Err(io::Error::new(
                         io::ErrorKind::TimedOut,
@@ -222,6 +250,21 @@ fn run_with_timeout(mut command: Command, timeout: Duration) -> io::Result<ExitS
                 thread::sleep(Duration::from_millis(50));
             }
         }
+    }
+}
+
+/// Sends SIGTERM to the script's process group, waits `grace`, then escalates
+/// to SIGKILL so even signal-ignoring descendants are reaped.
+fn terminate_process_group(pgid: u32, grace: Duration) {
+    let pgid = -(pgid as i32);
+    // SAFETY: kill(-pgid, sig) signals the process group; ESRCH is harmless
+    // when the group already exited during the grace period.
+    unsafe {
+        libc::kill(pgid, libc::SIGTERM);
+    }
+    thread::sleep(grace);
+    unsafe {
+        libc::kill(pgid, libc::SIGKILL);
     }
 }
 
@@ -481,6 +524,58 @@ mod tests {
             result.unwrap_err(),
             StauError::SetupScriptFailed { .. }
         ));
+    }
+
+    #[test]
+    fn test_script_timeout_kills_grandchildren() {
+        let temp_dir = TempDir::new().unwrap();
+        let script_path = temp_dir.path().join("setup.sh");
+        let stau_dir = temp_dir.path().join("stau");
+        let target_dir = temp_dir.path().join("target");
+        let heartbeat = temp_dir.path().join("heartbeat");
+
+        fs::create_dir(&stau_dir).unwrap();
+        fs::create_dir(&target_dir).unwrap();
+
+        // A grandchild writes a heartbeat until the whole process group is
+        // killed; the parent script itself just sleeps past the timeout.
+        create_script(
+            &script_path,
+            &format!(
+                "#!/bin/bash\n( while :; do echo beat >> {}; sleep 0.05; done ) &\nsleep 30\n",
+                heartbeat.display()
+            ),
+        );
+
+        let result = execute_script(
+            &script_path,
+            "test",
+            &stau_dir,
+            &target_dir,
+            false,
+            false,
+            &ScriptOptions {
+                timeout: Some(Duration::from_millis(300)),
+                ..ScriptOptions::default()
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            StauError::SetupScriptFailed { .. }
+        ));
+
+        let heartbeats = || {
+            fs::read_to_string(&heartbeat)
+                .map(|s| s.lines().count())
+                .unwrap_or(0)
+        };
+        let before = heartbeats();
+        assert!(before > 0, "grandchild should have written heartbeats");
+        thread::sleep(Duration::from_millis(400));
+        let after = heartbeats();
+        assert_eq!(before, after, "grandchild must be dead after the timeout");
     }
 
     #[test]

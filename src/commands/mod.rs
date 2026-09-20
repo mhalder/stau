@@ -27,12 +27,14 @@ pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool
             script,
         } => {
             let packages = resolve_packages(config, package, all, profile)?;
+            let mut script = script_options(&script)?;
+            script.json = json;
             let run = RunOptions {
                 target,
                 json,
                 dry_run,
                 verbose,
-                script: script_options(&script)?,
+                script,
             };
             install::install_packages(config, &packages, no_setup, &run)
         }
@@ -46,12 +48,14 @@ pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool
             script,
         } => {
             let packages = resolve_packages(config, package, all, profile)?;
+            let mut script = script_options(&script)?;
+            script.json = json;
             let run = RunOptions {
                 target,
                 json,
                 dry_run,
                 verbose,
-                script: script_options(&script)?,
+                script,
             };
             uninstall::uninstall_packages(config, &packages, no_teardown, &run)
         }
@@ -66,12 +70,14 @@ pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool
             script,
         } => {
             let packages = resolve_packages(config, package, all, profile)?;
+            let mut script = script_options(&script)?;
+            script.json = json;
             let run = RunOptions {
                 target,
                 json,
                 dry_run,
                 verbose,
-                script: script_options(&script)?,
+                script,
             };
             restow::restow_packages(config, &packages, no_setup, no_teardown, &run)
         }
@@ -121,6 +127,11 @@ fn script_options(args: &ScriptArgs) -> Result<ScriptOptions> {
                 "--set expects a non-empty KEY".to_string(),
             ));
         }
+        if matches!(key, "STAU_DIR" | "STAU_TARGET" | "STAU_PACKAGE") {
+            return Err(error::StauError::InvalidArguments(format!(
+                "--set cannot override stau's own hook variable {key}"
+            )));
+        }
         env.push((key.to_string(), value.to_string()));
     }
 
@@ -135,6 +146,7 @@ fn script_options(args: &ScriptArgs) -> Result<ScriptOptions> {
         env,
         non_interactive: args.non_interactive,
         timeout,
+        json: false,
     })
 }
 
@@ -151,26 +163,44 @@ fn resolve_packages(
     let has_list = !packages.is_empty();
     let has_profile = profile.is_some();
 
-    match (all, has_list, has_profile) {
-        (true, true, _) => Err(error::StauError::InvalidArguments(
-            "Cannot specify both --all and a package name".to_string(),
-        )),
-        (true, false, true) => Err(error::StauError::InvalidArguments(
-            "Cannot specify both --all and --profile".to_string(),
-        )),
-        (false, true, true) => Err(error::StauError::InvalidArguments(
-            "Cannot specify both a package list and --profile".to_string(),
-        )),
-        (false, false, false) => Err(error::StauError::InvalidArguments(
-            "Must specify either a package name or --all".to_string(),
-        )),
-        (true, false, false) => crate::package::list_packages(&config.stau_dir),
-        (false, false, true) => crate::profile::read_profile(config, &profile.expect("checked")),
+    let mut resolved = match (all, has_list, has_profile) {
+        (true, true, _) => {
+            return Err(error::StauError::InvalidArguments(
+                "Cannot specify both --all and a package name".to_string(),
+            ));
+        }
+        (true, false, true) => {
+            return Err(error::StauError::InvalidArguments(
+                "Cannot specify both --all and --profile".to_string(),
+            ));
+        }
+        (false, true, true) => {
+            return Err(error::StauError::InvalidArguments(
+                "Cannot specify both a package list and --profile".to_string(),
+            ));
+        }
+        (false, false, false) => {
+            return Err(error::StauError::InvalidArguments(
+                "Must specify either a package name or --all".to_string(),
+            ));
+        }
+        (true, false, false) => crate::package::list_packages(&config.stau_dir)?,
+        (false, false, true) => crate::profile::read_profile(config, &profile.expect("checked"))?,
         (false, true, false) => {
             for package in &packages {
                 Config::validate_package_name(package)?;
             }
-            Ok(packages)
+            packages
         }
-    }
+    };
+
+    // Dedupe preserving first occurrence so `stau install a a` runs the hooks once.
+    dedupe_preserving_order(&mut resolved);
+    Ok(resolved)
+}
+
+/// Removes later occurrences of the same name, keeping the first.
+fn dedupe_preserving_order(packages: &mut Vec<String>) {
+    let mut seen = std::collections::HashSet::new();
+    packages.retain(|pkg| seen.insert(pkg.clone()));
 }

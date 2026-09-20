@@ -463,6 +463,7 @@ version = "3.1.1"
 dependencies = [
  "clap",
  "dirs",
+ "libc",
  "serde",
  "serde_json",
  "temp-env",

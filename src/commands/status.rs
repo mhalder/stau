@@ -30,10 +30,29 @@ impl FileState {
 /// Computes the state of one file mapping against the target directory.
 ///
 /// A target that is a regular file whose contents equal the package source is
-/// `Restored` — stau's copy-back contract after uninstall.
+/// `Restored` — stau's copy-back contract after uninstall. A read error on
+/// either file is returned as an I/O error (used by `verify`, which must fail
+/// on I/O).
 pub fn compute_file_state(
     mapping: &symlink::SymlinkMapping,
     broken: &HashSet<PathBuf>,
+) -> Result<FileState> {
+    compute_file_state_inner(mapping, broken, false)
+}
+
+/// Like [`compute_file_state`], but an unreadable target or source file is
+/// reported as `Conflict` instead of aborting the whole status envelope.
+pub fn compute_file_state_lenient(
+    mapping: &symlink::SymlinkMapping,
+    broken: &HashSet<PathBuf>,
+) -> FileState {
+    compute_file_state_inner(mapping, broken, true).expect("lenient state computation never fails")
+}
+
+fn compute_file_state_inner(
+    mapping: &symlink::SymlinkMapping,
+    broken: &HashSet<PathBuf>,
+    lenient: bool,
 ) -> Result<FileState> {
     if broken.contains(&mapping.target) {
         return Ok(FileState::Broken);
@@ -45,10 +64,13 @@ pub fn compute_file_state(
 
     match mapping.target.symlink_metadata() {
         Ok(metadata) if metadata.is_symlink() => Ok(FileState::Conflict),
-        Ok(metadata)
-            if metadata.is_file() && symlink::same_contents(&mapping.source, &mapping.target)? =>
-        {
-            Ok(FileState::Restored)
+        Ok(metadata) if metadata.is_file() => {
+            match symlink::same_contents(&mapping.source, &mapping.target) {
+                Ok(true) => Ok(FileState::Restored),
+                Ok(false) => Ok(FileState::Conflict),
+                Err(_) if lenient => Ok(FileState::Conflict),
+                Err(e) => Err(e),
+            }
         }
         Ok(_) => Ok(FileState::Conflict),
         Err(_) => Ok(FileState::NotInstalled),
@@ -87,8 +109,8 @@ struct StatusEnvelope {
     packages: Vec<StatusPackage>,
 }
 
-/// Entry point for `stau status`: human text for one package, or a JSON
-/// envelope for one or more packages.
+/// Entry point for `stau status`: human text for one or more packages, or a
+/// JSON envelope for one or more packages.
 pub fn run_status(
     config: &Config,
     packages: Vec<String>,
@@ -98,11 +120,11 @@ pub fn run_status(
     if json {
         show_status_json(config, &packages, target)
     } else {
-        let package = packages
-            .first()
-            .expect("clap requires exactly one package without --json");
-        Config::validate_package_name(package)?;
-        show_status(config, package, target)
+        for package in &packages {
+            Config::validate_package_name(package)?;
+            show_status(config, package, target.clone())?;
+        }
+        Ok(())
     }
 }
 
@@ -148,7 +170,7 @@ pub fn show_status(config: &Config, package: &str, target: Option<PathBuf>) -> R
     let mut not_installed = 0;
 
     for mapping in &mappings {
-        let (label, count_not_installed) = match compute_file_state(mapping, &broken_set)? {
+        let (label, count_not_installed) = match compute_file_state_lenient(mapping, &broken_set) {
             FileState::Installed => {
                 installed += 1;
                 ("[installed]", false)
@@ -244,7 +266,7 @@ fn collect_package_status(
     };
 
     for mapping in &mappings {
-        let state = compute_file_state(mapping, &broken_set)?;
+        let state = compute_file_state_lenient(mapping, &broken_set);
         match state {
             FileState::Installed => counts.installed += 1,
             FileState::NotInstalled | FileState::Restored => counts.not_installed += 1,

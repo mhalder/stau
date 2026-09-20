@@ -1,8 +1,8 @@
-use super::batch::{BatchLabels, run_for_packages};
+use super::batch::{BatchLabels, PackageOutcome, run_for_packages};
 use super::install::install_package;
 use super::uninstall::{UninstallOptions, uninstall_package_internal};
 use crate::config::Config;
-use crate::error::Result;
+use crate::error;
 use crate::options::RunOptions;
 
 /// Restows a package by removing its symlinks without copying files back, then
@@ -13,7 +13,7 @@ pub fn restow_package(
     no_setup: bool,
     no_teardown: bool,
     run: &RunOptions,
-) -> Result<()> {
+) -> PackageOutcome {
     let opts = UninstallOptions {
         no_teardown,
         copy_files_back: false,
@@ -21,8 +21,23 @@ pub fn restow_package(
         verbose: run.verbose,
         json: run.json,
     };
-    uninstall_package_internal(config, package, run.target.clone(), opts, &run.script)?;
-    install_package(config, package, no_setup, run)
+    let uninstall =
+        uninstall_package_internal(config, package, run.target.clone(), opts, &run.script);
+
+    // A hard uninstall failure aborts the restow, as before; a teardown failure
+    // only carries its flag forward into the install.
+    if let Some(e) = uninstall.error {
+        return PackageOutcome {
+            error: Some(e),
+            teardown_failed: uninstall.teardown_failed,
+        };
+    }
+
+    let install = install_package(config, package, no_setup, run);
+    PackageOutcome {
+        error: install.error,
+        teardown_failed: uninstall.teardown_failed,
+    }
 }
 
 /// Restows every package in `packages`, in the order given, continuing past
@@ -33,7 +48,7 @@ pub fn restow_packages(
     no_setup: bool,
     no_teardown: bool,
     run: &RunOptions,
-) -> Result<()> {
+) -> error::Result<()> {
     run_for_packages(
         config,
         packages,

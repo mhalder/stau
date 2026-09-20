@@ -76,19 +76,6 @@ pub fn run_verify(
             }
         }
 
-        // Broken symlinks left by files removed from the package are never in
-        // the expected state.
-        for path in &broken {
-            if mappings.iter().any(|mapping| mapping.target == *path) {
-                continue;
-            }
-            mismatches.push(VerifyMismatch {
-                rel: rel_to_target(path, &target_dir),
-                expected: expected.to_string(),
-                actual: "broken".to_string(),
-            });
-        }
-
         results.push(VerifyPackage {
             name: package.to_string(),
             ok: mismatches.is_empty(),

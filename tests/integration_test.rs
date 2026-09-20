@@ -3111,3 +3111,285 @@ fn test_install_json_summary_reports_failures() {
     assert_eq!(failed["name"], "vim");
     assert!(failed["error"].as_str().unwrap().contains("Conflicting"));
 }
+
+// =============================================================================
+// Fix-round regression tests (cross-review findings)
+// =============================================================================
+
+#[test]
+fn test_install_json_stdout_pure_with_printing_hook() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let pkg_dir = stau_dir.join("noisy");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    create_script(
+        &pkg_dir.join("setup.sh"),
+        "#!/bin/bash\necho hello-from-hook\n",
+    );
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "noisy", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "install failed: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout must be one JSON object");
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["packages"][0]["name"], "noisy");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("hello-from-hook"),
+        "hook output should be redirected to stderr: {stderr}"
+    );
+    assert!(!stdout.contains("hello-from-hook"));
+}
+
+#[test]
+fn test_uninstall_json_reports_teardown_failure() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let pkg_dir = stau_dir.join("pkg");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    create_test_package(&stau_dir, "pkg", &[".rc"]);
+    create_script(&pkg_dir.join("teardown.sh"), "#!/bin/bash\nexit 1\n");
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    assert!(run(&["install", "pkg"]).status.success());
+
+    let output = run(&["uninstall", "pkg", "--json"]);
+    assert_eq!(output.status.code(), Some(1), "output: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["packages"][0]["ok"], false);
+    assert_eq!(value["packages"][0]["teardown_failed"], true);
+}
+
+#[test]
+fn test_verify_ignores_stale_removed_file() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "pkg", &[".a", ".b"]);
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    assert!(run(&["install", "pkg"]).status.success());
+    assert!(target_dir.join(".a").is_symlink());
+    assert!(target_dir.join(".b").is_symlink());
+
+    // Remove .b from the package, leaving a stale broken link at ~/.b. verify
+    // is scoped to the files still present in the package, so it must not fail.
+    fs::remove_file(stau_dir.join("pkg/.b")).unwrap();
+
+    let output = run(&["verify", "--expect", "installed", "pkg"]);
+    assert!(
+        output.status.success(),
+        "verify must ignore a stale link to a removed file: {output:?}"
+    );
+}
+
+#[test]
+fn test_status_json_unreadable_file_is_conflict() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "pkg", &[".x"]);
+
+    // A mode-000 regular file at the target is unreadable for a non-root user.
+    fs::write(target_dir.join(".x"), "existing").unwrap();
+    fs::set_permissions(target_dir.join(".x"), fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read(target_dir.join(".x")).is_ok() {
+        // Running as root, where permissions are not enforced.
+        fs::set_permissions(target_dir.join(".x"), fs::Permissions::from_mode(0o644)).unwrap();
+        return;
+    }
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    // status --json reports the unreadable file as a conflict instead of
+    // aborting the whole envelope with an I/O error.
+    let output = run(&["status", "--json", "pkg"]);
+    assert!(output.status.success(), "status --json failed: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(value["packages"][0]["files"][0]["state"], "conflict");
+    assert_eq!(value["packages"][0]["counts"]["conflict"], 1);
+
+    // verify keeps the I/O exit code for the same unreadable file.
+    let output = run(&["verify", "--expect", "installed", "pkg"]);
+    assert_eq!(output.status.code(), Some(3), "output: {output:?}");
+}
+
+#[test]
+fn test_status_multiple_packages_without_json() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+    create_test_package(&stau_dir, "git", &[".gitconfig"]);
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["status", "vim", "git"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Status for package 'vim'"),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("Status for package 'git'"),
+        "stdout: {stdout}"
+    );
+}
+
+#[test]
+fn test_install_json_reports_exit_code_and_kind() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+    fs::write(target_dir.join(".vimrc"), "existing").unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim", "--json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1), "output: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let package = &value["packages"][0];
+    assert_eq!(package["ok"], false);
+    assert_eq!(package["exit_code"], 2);
+    assert_eq!(package["error_kind"], "conflict");
+}
+
+#[test]
+fn test_install_duplicate_package_runs_hook_once() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let pkg_dir = stau_dir.join("hookonly");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    let marker = target_dir.join("runs.txt");
+    create_script(
+        &pkg_dir.join("setup.sh"),
+        &format!("#!/bin/bash\necho ran >> {}\n", marker.display()),
+    );
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "hookonly", "hookonly"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "install failed: {output:?}");
+    let runs = fs::read_to_string(&marker).unwrap().lines().count();
+    assert_eq!(
+        runs, 1,
+        "duplicate package must run its hook once, got {runs}"
+    );
+}
+
+#[test]
+fn test_install_missing_profile_exits_1() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "--profile", "nope"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1), "output: {output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Profile not found"), "stderr: {stderr}");
+}
+
+#[test]
+fn test_set_rejects_stau_own_variables() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "pkg", &[".rc"]);
+
+    for var in ["STAU_DIR", "STAU_TARGET", "STAU_PACKAGE"] {
+        let output = Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .args(["install", "pkg", "--set", &format!("{var}=x")])
+            .output()
+            .unwrap();
+
+        assert_eq!(output.status.code(), Some(1), "var {var}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("cannot override"), "stderr: {stderr}");
+    }
+}

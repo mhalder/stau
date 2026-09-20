@@ -12,8 +12,18 @@ pub fn read_profile(config: &Config, name: &str) -> Result<Vec<String>> {
     Config::validate_package_name(name)?;
 
     let path = config.stau_dir.join("profiles").join(name);
-    let contents = fs::read_to_string(&path)
-        .map_err(|e| map_io_error(e, format!("Cannot read profile: {}", path.display())))?;
+    let contents = match fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(crate::error::StauError::ProfileNotFound(name.to_string()));
+        }
+        Err(e) => {
+            return Err(map_io_error(
+                e,
+                format!("Cannot read profile: {}", path.display()),
+            ));
+        }
+    };
 
     let mut packages = Vec::new();
     for line in contents.lines() {

@@ -232,10 +232,11 @@ Packages in /home/user/dotfiles:
 
 ### `stau status <package...>` (alias: `s`)
 
-Shows detailed status information for a specific package, including each file's symlink state. `--json` prints a machine-readable envelope for one or more packages (or every package when none are named) and accepts `[restored]` as a file state — a regular file whose contents equal the package source, which is what `uninstall` leaves behind.
+Shows detailed status for one or more packages, including each file's symlink state. `--json` prints a machine-readable envelope for the named packages (or every package when none are named) and accepts `[restored]` as a file state — a regular file whose contents equal the package source, which is what `uninstall` leaves behind. An unreadable target file is reported as `[conflict]` rather than failing the whole report.
 
 ```bash
 stau status ghostty                     # Show detailed status
+stau status ghostty git                 # Several packages
 stau status git --target /tmp/test      # Check against custom target
 stau status --json                      # Envelope for every package
 stau status --json ghostty git          # Envelope for named packages
@@ -265,7 +266,7 @@ Summary: 1 installed, 0 not installed, 0 broken
 
 ### `stau verify <package...>` (alias: `v`)
 
-Checks that every file of every named package is in the expected state and exits non-zero on the first mismatch. `--expect installed` (the default) requires each file to be a symlink into the package; `--expect uninstalled` requires each file to be a `restored` plain copy whose contents match the package source.
+Checks that every file currently present in each named package is in the expected state and exits non-zero on the first mismatch. `--expect installed` (the default) requires each file to be a symlink into the package; `--expect uninstalled` requires each file to be a `restored` plain copy whose contents match the package source. A stale symlink left by a file removed from the package is not a file of the package, so `verify` ignores it (it shows up in `status` and is removable with `clean`).
 
 ```bash
 stau verify --expect installed ghostty   # Exit 0 only if fully linked
@@ -322,9 +323,9 @@ Scripts receive these environment variables:
 
 Scripts inherit the terminal, so they may prompt for input and their output is shown as it is produced. For automation:
 
-- `--set KEY=VALUE` (repeatable) adds environment variables to the script process.
+- `--set KEY=VALUE` (repeatable) adds environment variables to the script process. `STAU_DIR`, `STAU_TARGET`, and `STAU_PACKAGE` are reserved and cannot be overridden.
 - `--non-interactive` connects the script's stdin to `/dev/null`, so a prompting hook fails immediately instead of blocking.
-- `--script-timeout <DUR>` kills a script that runs longer than the given duration (e.g. `30s`, `5m`, `500ms`). A timeout is reported as a script failure (exit code 4).
+- `--script-timeout <DUR>` kills a script that runs longer than the given duration (e.g. `30s`, `5m`, `500ms`). A timeout is reported as a script failure (exit code 4). The script runs in its own process group, so a timeout also kills its descendants.
 
 ### Example setup.sh
 
@@ -413,7 +414,7 @@ ripgrep
 sesh
 ```
 
-The `profiles` directory itself is never treated as a package by `--all`, `list`, or `status --json`.
+The `profiles` directory itself is never treated as a package by `--all`, `list`, or `status --json`. A profile that does not exist is reported as not-found (exit 1). Duplicate package names in a profile or an explicit list are installed once, keeping the first occurrence.
 
 ## Machine-readable Output
 
@@ -421,9 +422,9 @@ Three commands produce stable machine-readable output:
 
 - `stau status --json [<package>...]` prints one JSON object with `stau_dir`, `target`, and a `packages` array of per-package state, counts, and files.
 - `stau verify [--json] <package>...` prints per-file mismatches; with `--json` it prints `{"ok": bool, "packages": [...]}` and exits 5 on any mismatch.
-- `stau install|uninstall|restow --json` print a summary object `{"ok": bool, "packages": [{"name", "ok", "error"}]}` on stdout, also when some packages failed (the command still exits 1).
+- `stau install|uninstall|restow --json` print a summary object on stdout, also when some packages failed (the command still exits 1). Each package entry carries `name` and `ok`; on failure it also carries `error`, `exit_code` and `error_kind`, and a teardown script that failed while the uninstall carried on is marked `teardown_failed: true`.
 
-In `--json` mode stau suppresses its own human output, but hook scripts still inherit the terminal; keep scripts quiet or redirect their output when parsing stdout.
+In `--json` mode stau suppresses its own human output and redirects hook stdout to stderr, so stdout carries exactly one JSON object; hook output still appears on stderr.
 
 ## Exit Codes
 

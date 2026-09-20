@@ -1,4 +1,4 @@
-use super::batch::{BatchLabels, run_for_packages};
+use super::batch::{BatchLabels, PackageOutcome, run_for_packages};
 use crate::config::Config;
 use crate::error::{self, Result};
 use crate::options::RunOptions;
@@ -21,14 +21,15 @@ pub struct UninstallOptions {
 
 /// Uninstalls a package by removing symlinks and optionally copying files back.
 ///
-/// If a teardown script exists and `no_teardown` is false, it will be executed first.
-/// Teardown script failures are logged but don't stop the uninstall process.
+/// If a teardown script exists and `no_teardown` is false, it will be executed
+/// first. A teardown failure is non-fatal: the uninstall carries on and the
+/// outcome's `teardown_failed` flag records it for the machine-readable summary.
 pub fn uninstall_package(
     config: &Config,
     package: &str,
     no_teardown: bool,
     run: &RunOptions,
-) -> Result<()> {
+) -> PackageOutcome {
     let opts = UninstallOptions {
         no_teardown,
         copy_files_back: true,
@@ -46,7 +47,7 @@ pub fn uninstall_packages(
     packages: &[String],
     no_teardown: bool,
     run: &RunOptions,
-) -> Result<()> {
+) -> error::Result<()> {
     run_for_packages(
         config,
         packages,
@@ -63,7 +64,7 @@ pub fn uninstall_package_internal(
     target: Option<PathBuf>,
     opts: UninstallOptions,
     script_options: &crate::script::ScriptOptions,
-) -> Result<()> {
+) -> PackageOutcome {
     let target_dir = config.get_target(target);
     let package_dir = config.get_package_dir(package);
 
@@ -73,12 +74,20 @@ pub fn uninstall_package_internal(
     }
 
     if !config.package_exists(package) {
-        return Err(error::StauError::PackageNotFound(package.to_string()));
+        return PackageOutcome::failed(error::StauError::PackageNotFound(package.to_string()));
     }
 
-    run_teardown_script(config, package, &target_dir, &opts, script_options);
+    let teardown_failed = run_teardown_script(config, package, &target_dir, &opts, script_options);
 
-    let mappings = package::discover_package_files(&package_dir, &target_dir)?;
+    let mappings = match package::discover_package_files(&package_dir, &target_dir) {
+        Ok(mappings) => mappings,
+        Err(e) => {
+            return PackageOutcome {
+                error: Some(e),
+                teardown_failed,
+            };
+        }
+    };
     if opts.verbose && !opts.json {
         println!("Found {} symlinks to remove", mappings.len());
     }
@@ -87,27 +96,41 @@ pub fn uninstall_package_internal(
         if !opts.json {
             println!("No symlinks to remove for package '{}'", package);
         }
-        return Ok(());
+        return PackageOutcome {
+            error: None,
+            teardown_failed,
+        };
     }
 
-    let removed_count = remove_package_symlinks(&mappings, &opts)?;
-    print_uninstall_summary(package, removed_count, &opts);
-    Ok(())
+    match remove_package_symlinks(&mappings, &opts) {
+        Ok(removed_count) => {
+            print_uninstall_summary(package, removed_count, &opts);
+            PackageOutcome {
+                error: None,
+                teardown_failed,
+            }
+        }
+        Err(e) => PackageOutcome {
+            error: Some(e),
+            teardown_failed,
+        },
+    }
 }
 
+/// Runs the teardown script, returning `true` when it failed (non-fatal).
 fn run_teardown_script(
     config: &Config,
     package: &str,
     target_dir: &Path,
     opts: &UninstallOptions,
     script_options: &crate::script::ScriptOptions,
-) {
+) -> bool {
     if opts.no_teardown {
-        return;
+        return false;
     }
 
     let Some(teardown_script) = config.get_teardown_script(package) else {
-        return;
+        return false;
     };
 
     if opts.verbose && !opts.json {
@@ -126,9 +149,13 @@ fn run_teardown_script(
         Err(e) => {
             eprintln!("Warning: Teardown script failed: {}", e);
             eprintln!("Continuing with uninstall...");
+            true
         }
-        Ok(()) if !opts.dry_run && !opts.json => println!("Teardown script completed successfully"),
-        Ok(()) => {}
+        Ok(()) if !opts.dry_run && !opts.json => {
+            println!("Teardown script completed successfully");
+            false
+        }
+        Ok(()) => false,
     }
 }
 

@@ -12,6 +12,11 @@ pub enum StauError {
     PackageNotFound(String),
 
     #[error(
+        "Profile not found: {0}\nHint: Profiles live in <STAU_DIR>/profiles/. Create it or pick another profile."
+    )]
+    ProfileNotFound(String),
+
+    #[error(
         "Conflicting file exists: {0}\nHint: A file already exists at this location. Either:\n  - Remove the existing file manually\n  - Adopt the existing file with 'stau adopt <package> {0}'"
     )]
     ConflictingFile(PathBuf),
@@ -64,6 +69,7 @@ impl StauError {
     pub fn exit_code(&self) -> i32 {
         match self {
             StauError::PackageNotFound(_) => 1,
+            StauError::ProfileNotFound(_) => 1,
             StauError::ConflictingFile(_) => 2,
             StauError::PermissionDenied(_) => 3,
             StauError::SetupScriptFailed { .. } => 4,
@@ -75,6 +81,25 @@ impl StauError {
             StauError::Other(_) => 1,
             StauError::InvalidArguments(_) => 1,
             StauError::VerifyMismatch(_) => 5,
+        }
+    }
+
+    /// A short, stable name for the error kind, for machine-readable output.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            StauError::PackageNotFound(_) => "not_found",
+            StauError::ProfileNotFound(_) => "not_found",
+            StauError::ConflictingFile(_) => "conflict",
+            StauError::PermissionDenied(_) => "permission",
+            StauError::SetupScriptFailed { .. } | StauError::TeardownScriptFailed { .. } => {
+                "script"
+            }
+            StauError::StauDirNotFound(_) => "stau_dir_not_found",
+            StauError::InvalidPath(_) => "invalid_path",
+            StauError::Io(_) | StauError::IoWithContext { .. } => "io",
+            StauError::Other(_) => "other",
+            StauError::InvalidArguments(_) => "invalid_arguments",
+            StauError::VerifyMismatch(_) => "verify_mismatch",
         }
     }
 }
