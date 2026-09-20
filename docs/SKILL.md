@@ -14,9 +14,9 @@ stau links the files of a package directory in a dotfiles repository (`STAU_DIR`
 
 ## Inspect before changing anything
 
-- `stau list` shows every package as installed, partial, or not installed, with a count of broken links.
+- `stau list` shows every package as installed, partial, not installed, or hook-only, with a count of broken links.
 - `stau status <package>` shows each file as `[installed]`, `[not installed]`, `[conflict]`, `[restored]`, or `[BROKEN]`, and whether setup and teardown scripts exist.
-- `stau status --json [<package>...]` prints the same state as a machine-readable envelope (one JSON object on stdout).
+- `stau status --json [<package>...]` prints the same state as a machine-readable envelope (one JSON object on stdout). The package `state` is `installed`, `partial`, `not_installed`, `conflict`, or `hook_only` — a package with no files to link, only hooks.
 - `stau verify [--expect installed|uninstalled] <package>...` checks that every file is in the expected state and exits 0 on success, 5 on mismatch.
 - Add `--dry-run` (`-n`) to any changing command first. It prints the symlinks, files, and scripts involved without touching the filesystem.
 

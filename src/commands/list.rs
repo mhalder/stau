@@ -25,10 +25,11 @@ struct PackageStatus {
     total_count: usize,
     installed_count: usize,
     broken_count: usize,
+    has_hook: bool,
 }
 
 fn print_package_status(config: &Config, target_dir: &Path, pkg: &str) {
-    match package_status(&config.get_package_dir(pkg), target_dir) {
+    match package_status(config, pkg, target_dir) {
         Ok(status) => print_package_status_line(pkg, &status),
         Err(e) => println!("  {:<20} [error: {}]", pkg, e),
     }
@@ -41,7 +42,10 @@ fn print_package_status_line(pkg: &str, status: &PackageStatus) {
         String::new()
     };
 
-    if status.installed_count == 0 {
+    if status.total_count == 0 && status.has_hook {
+        // No files to link: installing the package means running its hooks.
+        println!("  {:<20} [hook only]{}", pkg, broken);
+    } else if status.installed_count == 0 {
         println!("  {:<20} [not installed]{}", pkg, broken);
     } else if status.installed_count == status.total_count {
         println!(
@@ -59,8 +63,9 @@ fn print_package_status_line(pkg: &str, status: &PackageStatus) {
     }
 }
 
-fn package_status(package_dir: &Path, target_dir: &Path) -> Result<PackageStatus> {
-    let mappings = package::discover_package_files(package_dir, target_dir)?;
+fn package_status(config: &Config, pkg: &str, target_dir: &Path) -> Result<PackageStatus> {
+    let package_dir = config.get_package_dir(pkg);
+    let mappings = package::discover_package_files(&package_dir, target_dir)?;
     let installed_count = mappings
         .iter()
         .filter(|mapping| {
@@ -74,7 +79,9 @@ fn package_status(package_dir: &Path, target_dir: &Path) -> Result<PackageStatus
     Ok(PackageStatus {
         total_count: mappings.len(),
         installed_count,
-        broken_count: package::discover_broken_symlinks(package_dir, target_dir)?.len(),
+        broken_count: package::discover_broken_symlinks(&package_dir, target_dir)?.len(),
+        has_hook: config.get_setup_script(pkg).is_some()
+            || config.get_teardown_script(pkg).is_some(),
     })
 }
 

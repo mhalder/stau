@@ -2835,6 +2835,64 @@ fn test_status_json_restored_after_uninstall() {
 }
 
 #[test]
+fn test_status_json_hook_only_package() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // No files at all, only a setup hook: nothing to link, so the package state
+    // must say that rather than claim it is not installed.
+    let pkg_dir = stau_dir.join("hookonly");
+    fs::create_dir(&pkg_dir).unwrap();
+    create_script(&pkg_dir.join("setup.sh"), "#!/bin/bash\ntrue\n");
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["status", "--json", "hookonly"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "status --json failed: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    let package = &value["packages"][0];
+    assert_eq!(package["name"], "hookonly");
+    assert_eq!(package["state"], "hook_only");
+    assert_eq!(package["setup_script"], true);
+    assert_eq!(package["teardown_script"], false);
+    assert_eq!(package["counts"]["installed"], 0);
+    assert_eq!(package["files"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn test_list_hook_only_package() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let pkg_dir = stau_dir.join("hookonly");
+    fs::create_dir(&pkg_dir).unwrap();
+    create_script(&pkg_dir.join("setup.sh"), "#!/bin/bash\ntrue\n");
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["list"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "list failed: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[hook only]"), "stdout: {stdout}");
+}
+
+#[test]
 fn test_verify_installed_and_uninstalled() {
     let temp_dir = TempDir::new().unwrap();
     let stau_dir = temp_dir.path().join("dotfiles");

@@ -160,7 +160,13 @@ pub fn show_status(config: &Config, package: &str, target: Option<PathBuf>) -> R
     let broken_set: HashSet<PathBuf> = broken.iter().cloned().collect();
 
     if mappings.is_empty() && broken.is_empty() {
-        println!("\nNo files in package.");
+        if config.get_setup_script(package).is_some()
+            || config.get_teardown_script(package).is_some()
+        {
+            println!("\nNo files in package (hook-only).");
+        } else {
+            println!("\nNo files in package.");
+        }
         return Ok(());
     }
 
@@ -294,8 +300,15 @@ fn collect_package_status(
     }
 
     let total = mappings.len();
+    let setup_script = config.get_setup_script(package).is_some();
+    let teardown_script = config.get_teardown_script(package).is_some();
     let state = if counts.conflict > 0 {
         "conflict"
+    } else if total == 0 && (setup_script || teardown_script) {
+        // A package with no files at all has nothing to link: what installing
+        // it means is running its hooks, which stau does not record. Neither
+        // "installed" nor "not_installed" is true, so say what is.
+        "hook_only"
     } else if total == 0 || counts.installed == 0 {
         "not_installed"
     } else if counts.installed == total {
@@ -307,8 +320,8 @@ fn collect_package_status(
     Ok(StatusPackage {
         name: package.to_string(),
         state: state.to_string(),
-        setup_script: config.get_setup_script(package).is_some(),
-        teardown_script: config.get_teardown_script(package).is_some(),
+        setup_script,
+        teardown_script,
         counts,
         files,
     })

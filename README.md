@@ -208,7 +208,7 @@ stau adopt tmux ~/.tmux.conf --dry-run       # Preview adoption
 
 ### `stau list` (aliases: `l`, `ls`)
 
-Shows all packages in your dotfiles directory and their installation status.
+Shows all packages in your dotfiles directory and their installation status. A package with no files, only setup/teardown hooks, is shown as `[hook only]`: it has no symlinks to report, and installing it means running its hooks.
 
 ```bash
 stau list                           # List all packages
@@ -223,6 +223,7 @@ Packages in /home/user/dotfiles:
   ghostty              [installed]  1 symlink
   git                  [installed]  1 symlink
   tmux                 [not installed]
+  hookonly             [hook only]
 ```
 
 **Options:**
@@ -232,7 +233,7 @@ Packages in /home/user/dotfiles:
 
 ### `stau status <package...>` (alias: `s`)
 
-Shows detailed status for one or more packages, including each file's symlink state. `--json` prints a machine-readable envelope for the named packages (or every package when none are named) and accepts `[restored]` as a file state — a regular file whose contents equal the package source, which is what `uninstall` leaves behind. An unreadable target file is reported as `[conflict]` rather than failing the whole report.
+Shows detailed status for one or more packages, including each file's symlink state. `--json` prints a machine-readable envelope for the named packages (or every package when none are named) and accepts `[restored]` as a file state — a regular file whose contents equal the package source, which is what `uninstall` leaves behind. An unreadable target file is reported as `[conflict]` rather than failing the whole report. The package-level `state` is `installed`, `partial`, `not_installed`, `conflict`, or `hook_only` — a package with no files to link, only hooks, whose installation is not represented by symlinks.
 
 ```bash
 stau status ghostty                     # Show detailed status
