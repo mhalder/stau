@@ -1,24 +1,25 @@
-use super::batch::{BatchLabels, run_for_all_packages};
+use super::batch::{BatchLabels, run_for_packages};
 use crate::config::Config;
 use crate::error::{self, Result};
+use crate::options::RunOptions;
 use crate::{package, script, symlink};
-use std::path::PathBuf;
 
 /// Installs a package by creating symlinks from the package directory to the target directory.
 ///
 /// If a setup script exists and `no_setup` is false, it will be executed after creating symlinks.
+///
+/// With `run.json`, stau's own human output is suppressed so a machine-readable
+/// summary can be printed by the caller.
 pub fn install_package(
     config: &Config,
     package: &str,
-    target: Option<PathBuf>,
     no_setup: bool,
-    dry_run: bool,
-    verbose: bool,
+    run: &RunOptions,
 ) -> Result<()> {
-    let target_dir = config.get_target(target);
+    let target_dir = config.get_target(run.target.clone());
     let package_dir = config.get_package_dir(package);
 
-    if verbose {
+    if run.verbose && !run.json {
         println!("Package directory: {}", package_dir.display());
         println!("Target directory: {}", target_dir.display());
     }
@@ -31,22 +32,22 @@ pub fn install_package(
     // Discover all files in the package
     let mappings = package::discover_package_files(&package_dir, &target_dir)?;
 
-    if verbose {
+    if run.verbose && !run.json {
         println!("Found {} files to link", mappings.len());
     }
 
     if mappings.is_empty() {
-        println!("No files to link in package '{}'", package);
+        if !run.json {
+            println!("No files to link in package '{}'", package);
+        }
     } else {
         // Check every target for conflicts before creating any symlink, so a
         // conflict does not leave the package partially installed
-        for mapping in &mappings {
-            symlink::create_symlink(&mapping.source, &mapping.target, true)?;
-        }
+        symlink::check_conflicts(&mappings)?;
 
         // Create symlinks for all files
         for mapping in &mappings {
-            if verbose || dry_run {
+            if (run.verbose || run.dry_run) && !run.json {
                 println!(
                     "  {} -> {}",
                     mapping.target.display(),
@@ -54,10 +55,10 @@ pub fn install_package(
                 );
             }
 
-            symlink::create_symlink(&mapping.source, &mapping.target, dry_run)?;
+            symlink::create_symlink(&mapping.source, &mapping.target, run.dry_run)?;
         }
 
-        if !dry_run {
+        if !run.dry_run && !run.json {
             println!(
                 "Successfully installed {} ({} symlinks created)",
                 package,
@@ -68,7 +69,7 @@ pub fn install_package(
 
     // Run setup script if it exists and not skipped
     if !no_setup && let Some(setup_script) = config.get_setup_script(package) {
-        if verbose {
+        if run.verbose && !run.json {
             println!("Found setup script: {}", setup_script.display());
         }
 
@@ -77,11 +78,12 @@ pub fn install_package(
             package,
             &config.stau_dir,
             &target_dir,
-            dry_run,
-            verbose,
+            run.dry_run,
+            run.verbose,
+            &run.script,
         )?;
 
-        if !dry_run {
+        if !run.dry_run && !run.json {
             println!("Setup script completed successfully");
         }
     }
@@ -89,23 +91,19 @@ pub fn install_package(
     Ok(())
 }
 
-/// Installs all packages found in STAU_DIR.
-///
-/// For each package, symlinks are created and setup scripts are run (unless skipped).
-/// If any package fails to install, the error is reported but installation continues
-/// for remaining packages, and an error is returned once all packages were processed.
-pub fn install_all_packages(
+/// Installs every package in `packages`, in the order given, continuing past
+/// failures and reporting a machine-readable summary when `run.json` is set.
+pub fn install_packages(
     config: &Config,
-    target: Option<PathBuf>,
+    packages: &[String],
     no_setup: bool,
-    dry_run: bool,
-    verbose: bool,
+    run: &RunOptions,
 ) -> Result<()> {
-    run_for_all_packages(
+    run_for_packages(
         config,
-        target,
-        verbose,
-        BatchLabels::new("Installing", "install", "installed", "Installed"),
-        |pkg, target| install_package(config, pkg, target, no_setup, dry_run, verbose),
+        packages,
+        run,
+        &BatchLabels::new("Installing", "install", "installed", "Installed"),
+        |pkg| install_package(config, pkg, no_setup, run),
     )
 }

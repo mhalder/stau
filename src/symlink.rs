@@ -93,6 +93,17 @@ fn normalize_lexically(path: &Path) -> PathBuf {
     normalized
 }
 
+/// Checks every target for conflicts before any symlink is created.
+///
+/// This is the conflict pre-check used by `install` so a conflicting file does
+/// not leave the package partially installed. It reports the first conflict.
+pub fn check_conflicts(mappings: &[SymlinkMapping]) -> Result<()> {
+    for mapping in mappings {
+        create_symlink(&mapping.source, &mapping.target, true)?;
+    }
+    Ok(())
+}
+
 /// Creates a symlink at `target` pointing to `source`, creating parent directories as needed.
 ///
 /// If the symlink already exists and points to the correct source, this is a no-op.
@@ -143,6 +154,18 @@ pub fn remove_symlink(path: &Path, expected_source: &Path, dry_run: bool) -> Res
         .map_err(|e| map_io_error(e, format!("Cannot remove symlink: {}", path.display())))?;
 
     Ok(true)
+}
+
+/// Compares two files byte-for-byte.
+///
+/// Used to recognize a target file that stau copied back from the package on
+/// uninstall (the `restored` state).
+pub fn same_contents(a: &Path, b: &Path) -> Result<bool> {
+    let contents_a =
+        fs::read(a).map_err(|e| map_io_error(e, format!("Cannot read file: {}", a.display())))?;
+    let contents_b =
+        fs::read(b).map_err(|e| map_io_error(e, format!("Cannot read file: {}", b.display())))?;
+    Ok(contents_a == contents_b)
 }
 
 /// Copies a file from source to destination, creating parent directories as needed.

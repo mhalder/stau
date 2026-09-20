@@ -215,10 +215,12 @@ pub fn list_packages(stau_dir: &Path) -> Result<Vec<String>> {
         let entry = entry.map_err(StauError::Io)?;
         let path = entry.path();
 
-        // Only include directories, skip hidden directories
+        // Only include directories, skip hidden directories and the reserved
+        // `profiles` directory (which holds named package lists, see --profile)
         if path.is_dir()
             && let Some(name) = path.file_name()
             && !name.to_string_lossy().starts_with('.')
+            && name.to_string_lossy() != "profiles"
         {
             packages.push(name.to_string_lossy().to_string());
         }

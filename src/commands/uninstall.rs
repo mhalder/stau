@@ -1,6 +1,7 @@
-use super::batch::{BatchLabels, run_for_all_packages};
+use super::batch::{BatchLabels, run_for_packages};
 use crate::config::Config;
 use crate::error::{self, Result};
+use crate::options::RunOptions;
 use crate::{package, script, symlink};
 use std::path::{Path, PathBuf};
 
@@ -14,6 +15,8 @@ pub struct UninstallOptions {
     pub dry_run: bool,
     /// Verbose output
     pub verbose: bool,
+    /// Suppress stau's own human stdout output (JSON summary mode)
+    pub json: bool,
 }
 
 /// Uninstalls a package by removing symlinks and optionally copying files back.
@@ -23,38 +26,33 @@ pub struct UninstallOptions {
 pub fn uninstall_package(
     config: &Config,
     package: &str,
-    target: Option<PathBuf>,
     no_teardown: bool,
-    dry_run: bool,
-    verbose: bool,
+    run: &RunOptions,
 ) -> Result<()> {
     let opts = UninstallOptions {
         no_teardown,
         copy_files_back: true,
-        dry_run,
-        verbose,
+        dry_run: run.dry_run,
+        verbose: run.verbose,
+        json: run.json,
     };
-    uninstall_package_internal(config, package, target, opts)
+    uninstall_package_internal(config, package, run.target.clone(), opts, &run.script)
 }
 
-/// Uninstalls all packages found in STAU_DIR.
-///
-/// For each package, teardown scripts are run (unless skipped) and symlinks are removed.
-/// If any package fails to uninstall, the error is reported but uninstallation continues
-/// for remaining packages, and an error is returned once all packages were processed.
-pub fn uninstall_all_packages(
+/// Uninstalls every package in `packages`, in the order given, continuing past
+/// failures and reporting a machine-readable summary when `run.json` is set.
+pub fn uninstall_packages(
     config: &Config,
-    target: Option<PathBuf>,
+    packages: &[String],
     no_teardown: bool,
-    dry_run: bool,
-    verbose: bool,
+    run: &RunOptions,
 ) -> Result<()> {
-    run_for_all_packages(
+    run_for_packages(
         config,
-        target,
-        verbose,
-        BatchLabels::new("Uninstalling", "uninstall", "uninstalled", "Uninstalled"),
-        |pkg, target| uninstall_package(config, pkg, target, no_teardown, dry_run, verbose),
+        packages,
+        run,
+        &BatchLabels::new("Uninstalling", "uninstall", "uninstalled", "Uninstalled"),
+        |pkg| uninstall_package(config, pkg, no_teardown, run),
     )
 }
 
@@ -64,11 +62,12 @@ pub fn uninstall_package_internal(
     package: &str,
     target: Option<PathBuf>,
     opts: UninstallOptions,
+    script_options: &crate::script::ScriptOptions,
 ) -> Result<()> {
     let target_dir = config.get_target(target);
     let package_dir = config.get_package_dir(package);
 
-    if opts.verbose {
+    if opts.verbose && !opts.json {
         println!("Package directory: {}", package_dir.display());
         println!("Target directory: {}", target_dir.display());
     }
@@ -77,15 +76,17 @@ pub fn uninstall_package_internal(
         return Err(error::StauError::PackageNotFound(package.to_string()));
     }
 
-    run_teardown_script(config, package, &target_dir, &opts);
+    run_teardown_script(config, package, &target_dir, &opts, script_options);
 
     let mappings = package::discover_package_files(&package_dir, &target_dir)?;
-    if opts.verbose {
+    if opts.verbose && !opts.json {
         println!("Found {} symlinks to remove", mappings.len());
     }
 
     if mappings.is_empty() {
-        println!("No symlinks to remove for package '{}'", package);
+        if !opts.json {
+            println!("No symlinks to remove for package '{}'", package);
+        }
         return Ok(());
     }
 
@@ -94,7 +95,13 @@ pub fn uninstall_package_internal(
     Ok(())
 }
 
-fn run_teardown_script(config: &Config, package: &str, target_dir: &Path, opts: &UninstallOptions) {
+fn run_teardown_script(
+    config: &Config,
+    package: &str,
+    target_dir: &Path,
+    opts: &UninstallOptions,
+    script_options: &crate::script::ScriptOptions,
+) {
     if opts.no_teardown {
         return;
     }
@@ -103,7 +110,7 @@ fn run_teardown_script(config: &Config, package: &str, target_dir: &Path, opts: 
         return;
     };
 
-    if opts.verbose {
+    if opts.verbose && !opts.json {
         println!("Found teardown script: {}", teardown_script.display());
     }
 
@@ -114,12 +121,13 @@ fn run_teardown_script(config: &Config, package: &str, target_dir: &Path, opts: 
         target_dir,
         opts.dry_run,
         opts.verbose,
+        script_options,
     ) {
         Err(e) => {
             eprintln!("Warning: Teardown script failed: {}", e);
             eprintln!("Continuing with uninstall...");
         }
-        Ok(()) if !opts.dry_run => println!("Teardown script completed successfully"),
+        Ok(()) if !opts.dry_run && !opts.json => println!("Teardown script completed successfully"),
         Ok(()) => {}
     }
 }
@@ -160,7 +168,7 @@ fn remove_package_symlink(
     let was_removed = symlink::remove_symlink(&mapping.target, &mapping.source, opts.dry_run)?;
 
     if !was_removed {
-        if opts.verbose {
+        if opts.verbose && !opts.json {
             println!(
                 "  Skipping {} (not a stau-managed symlink)",
                 mapping.target.display()
@@ -169,7 +177,7 @@ fn remove_package_symlink(
         return Ok(false);
     }
 
-    if opts.verbose || opts.dry_run {
+    if (opts.verbose || opts.dry_run) && !opts.json {
         println!("  Removing symlink: {}", mapping.target.display());
     }
 
@@ -195,7 +203,7 @@ fn remove_package_symlink(
 }
 
 fn copy_source_to_target(mapping: &symlink::SymlinkMapping, opts: &UninstallOptions) -> Result<()> {
-    if opts.verbose || opts.dry_run {
+    if (opts.verbose || opts.dry_run) && !opts.json {
         println!("  Copying file: {}", mapping.target.display());
     }
 
@@ -203,7 +211,7 @@ fn copy_source_to_target(mapping: &symlink::SymlinkMapping, opts: &UninstallOpti
         return Err(error::StauError::ConflictingFile(mapping.target.clone()));
     }
 
-    if opts.dry_run && opts.verbose {
+    if opts.dry_run && opts.verbose && !opts.json {
         println!("    (conflict check skipped in dry-run)");
     }
 
@@ -211,7 +219,7 @@ fn copy_source_to_target(mapping: &symlink::SymlinkMapping, opts: &UninstallOpti
 }
 
 fn print_uninstall_summary(package: &str, removed_count: usize, opts: &UninstallOptions) {
-    if opts.dry_run {
+    if opts.dry_run || opts.json {
         return;
     }
 

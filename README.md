@@ -17,6 +17,10 @@ Traditional tools like GNU Stow excel at symlink management but lack automation 
 - **Dry Run Mode**: Preview changes before making them with `--dry-run`
 - **Broken Symlink Cleanup**: Clean up stale symlinks with the `clean` command
 - **Command Aliases**: Short aliases for common commands (`i`, `u`, `s`, `l`, etc.)
+- **Ordered Package Lists**: Install several packages in one command, in the order given
+- **Profiles**: Group packages into an ordered list with `--profile <name>`
+- **Machine-readable Output**: `--json` summaries and a `verify` command with a stable exit code
+- **Automation-safe Hooks**: `--non-interactive`, `--script-timeout`, and `--set` for hook scripts
 - **XDG Compliant**: Supports `~/.config/dotfiles` (preferred) and `~/dotfiles` (fallback)
 - **Linux Native**: Written in Rust for Linux with proper home directory and XDG detection
 
@@ -36,14 +40,26 @@ cargo install --path .
 # Install a package (creates symlinks + runs setup script)
 stau install ghostty
 
-# Install all packages at once
+# Install several packages in the order given
+stau install fish tmux git
+
+# Install all packages at once (alphabetical order)
 stau install --all
+
+# Install the ordered list in a profile
+stau install --profile headless
 
 # List all packages and their status
 stau list
 
 # Show detailed status for a specific package
 stau status ghostty
+
+# Show a machine-readable status envelope
+stau status --json
+
+# Verify every file of a package is installed
+stau verify --expect installed ghostty
 
 # Adopt existing dotfiles into stau management
 stau adopt ghostty ~/.config/ghostty/config
@@ -81,44 +97,60 @@ Organize your dotfiles in a directory structure where each subdirectory is a "pa
 
 ## Commands
 
-### `stau install [package]` (aliases: `i`, `add`)
+### `stau install [package...]` (aliases: `i`, `add`)
 
-Creates symlinks from your dotfiles package to the target directory and runs the package's `setup.sh` script if present.
+Creates symlinks from your dotfiles packages to the target directory and runs each package's `setup.sh` script if present. Multiple package names are installed in the order given; `--all` installs every package alphabetically; `--profile <name>` installs the ordered list from a profile.
 
 ```bash
 stau install ghostty                    # Basic install
-stau install --all                      # Install all packages
+stau install fish tmux git              # Several packages, in this order
+stau install --all                      # Install all packages (alphabetical)
+stau install --profile headless         # Install a profile's ordered list
 stau install ghostty --no-setup         # Skip setup script
 stau install ghostty --target /tmp/test # Install to custom directory
 stau install ghostty --dry-run          # Preview without making changes
 stau install ghostty --verbose          # Show detailed output
+stau install --all --json               # Machine-readable summary
+stau install fish --set DOTFILES_GUI=1 --non-interactive
 ```
 
 **Options:**
 | Flag | Description |
 |------|-------------|
-| `-a, --all` | Install all packages in STAU_DIR |
+| `-a, --all` | Install all packages in STAU_DIR (alphabetical order) |
+| `-p, --profile <NAME>` | Install the packages listed in `STAU_DIR/profiles/<NAME>` |
 | `--no-setup` | Skip running the setup script |
+| `--json` | Print a machine-readable JSON summary on stdout |
+| `--set KEY=VALUE` | Set an environment variable for hook scripts (repeatable) |
+| `--non-interactive` | Connect hook script stdin to `/dev/null` |
+| `--script-timeout <DUR>` | Kill a hook script that runs longer than this (e.g. `30s`, `5m`) |
 | `-t, --target <DIR>` | Target directory (default: `$HOME` or `$STAU_TARGET`) |
 | `-n, --dry-run` | Show what would be done without making changes |
 | `-v, --verbose` | Show detailed output |
 
-### `stau uninstall [package]` (aliases: `u`, `rm`)
+### `stau uninstall [package...]` (aliases: `u`, `rm`)
 
-Runs `teardown.sh` (if present), removes symlinks, and restores original files from the dotfiles repo. This "unadopts" the dotfiles, leaving you with standalone config files.
+Runs `teardown.sh` (if present), removes symlinks, and restores original files from the dotfiles repo. This "unadopts" the dotfiles, leaving you with standalone config files. Multiple package names are processed in the order given; `--all` processes every package alphabetically.
 
 ```bash
 stau uninstall ghostty                  # Basic uninstall
+stau uninstall fish tmux git            # Several packages, in this order
 stau uninstall --all                    # Uninstall all packages
 stau uninstall ghostty --no-teardown    # Skip teardown script
 stau uninstall ghostty --dry-run        # Preview without making changes
+stau uninstall --all --json             # Machine-readable summary
 ```
 
 **Options:**
 | Flag | Description |
 |------|-------------|
-| `-a, --all` | Uninstall all packages in STAU_DIR |
+| `-a, --all` | Uninstall all packages in STAU_DIR (alphabetical order) |
+| `-p, --profile <NAME>` | Uninstall the packages listed in `STAU_DIR/profiles/<NAME>` |
 | `--no-teardown` | Skip running the teardown script |
+| `--json` | Print a machine-readable JSON summary on stdout |
+| `--set KEY=VALUE` | Set an environment variable for hook scripts (repeatable) |
+| `--non-interactive` | Connect hook script stdin to `/dev/null` |
+| `--script-timeout <DUR>` | Kill a hook script that runs longer than this (e.g. `30s`, `5m`) |
 | `-t, --target <DIR>` | Target directory (default: `$HOME` or `$STAU_TARGET`) |
 | `-n, --dry-run` | Show what would be done without making changes |
 | `-v, --verbose` | Show detailed output |
@@ -127,22 +159,30 @@ stau uninstall ghostty --dry-run        # Preview without making changes
 
 If a symlink cannot be removed or its file cannot be copied back, uninstall still processes the remaining files, reports every failure, and exits with the error code of the last one. When copying a file back fails, its symlink is restored so the target file is not left missing.
 
-### `stau restow <package>` (alias: `r`)
+### `stau restow <package...>` (alias: `r`)
 
-Removes and recreates symlinks for a package. Useful after modifying the package structure or adding new files. Unlike `uninstall`, this does **not** copy files back. By default, both teardown and setup scripts run during restow.
+Removes and recreates symlinks for one or more packages. Useful after modifying the package structure or adding new files. Unlike `uninstall`, this does **not** copy files back. By default, both teardown and setup scripts run during restow. A package list is processed in the order given; `--all` restows every package alphabetically; `--profile <name>` restows a profile's ordered list.
 
 ```bash
 stau restow ghostty                     # Refresh symlinks (runs teardown + setup)
 stau restow ghostty --no-setup          # Skip setup script
 stau restow ghostty --no-teardown       # Skip teardown script
+stau restow --all                       # Restow every package
+stau restow --all --json                # Machine-readable summary
 stau restow ghostty --dry-run           # Preview changes
 ```
 
 **Options:**
 | Flag | Description |
 |------|-------------|
+| `-a, --all` | Restow all packages in STAU_DIR (alphabetical order) |
+| `-p, --profile <NAME>` | Restow the packages listed in `STAU_DIR/profiles/<NAME>` |
 | `--no-setup` | Skip running the setup script |
 | `--no-teardown` | Skip running the teardown script |
+| `--json` | Print a machine-readable JSON summary on stdout |
+| `--set KEY=VALUE` | Set an environment variable for hook scripts (repeatable) |
+| `--non-interactive` | Connect hook script stdin to `/dev/null` |
+| `--script-timeout <DUR>` | Kill a hook script that runs longer than this (e.g. `30s`, `5m`) |
 | `-t, --target <DIR>` | Target directory |
 | `-n, --dry-run` | Show what would be done without making changes |
 | `-v, --verbose` | Show detailed output |
@@ -190,13 +230,15 @@ Packages in /home/user/dotfiles:
 |------|-------------|
 | `-t, --target <DIR>` | Target directory to check status against |
 
-### `stau status <package>` (alias: `s`)
+### `stau status <package...>` (alias: `s`)
 
-Shows detailed status information for a specific package, including each file's symlink state.
+Shows detailed status information for a specific package, including each file's symlink state. `--json` prints a machine-readable envelope for one or more packages (or every package when none are named) and accepts `[restored]` as a file state — a regular file whose contents equal the package source, which is what `uninstall` leaves behind.
 
 ```bash
 stau status ghostty                     # Show detailed status
 stau status git --target /tmp/test      # Check against custom target
+stau status --json                      # Envelope for every package
+stau status --json ghostty git          # Envelope for named packages
 ```
 
 **Output example:**
@@ -218,7 +260,27 @@ Summary: 1 installed, 0 not installed, 0 broken
 **Options:**
 | Flag | Description |
 |------|-------------|
+| `--json` | Print a machine-readable JSON status envelope |
 | `-t, --target <DIR>` | Target directory to check status against |
+
+### `stau verify <package...>` (alias: `v`)
+
+Checks that every file of every named package is in the expected state and exits non-zero on the first mismatch. `--expect installed` (the default) requires each file to be a symlink into the package; `--expect uninstalled` requires each file to be a `restored` plain copy whose contents match the package source.
+
+```bash
+stau verify --expect installed ghostty   # Exit 0 only if fully linked
+stau verify --expect uninstalled ghostty # Exit 0 only if fully copied back
+stau verify --json ghostty               # Machine-readable mismatches
+```
+
+**Options:**
+| Flag | Description |
+|------|-------------|
+| `--expect installed\|uninstalled` | The state every file must be in (default `installed`) |
+| `--json` | Print mismatches as a machine-readable JSON object |
+| `-t, --target <DIR>` | Target directory to check against |
+
+Without `--json`, one line per mismatch is printed. `verify` exits 0 on success, 5 on mismatch, 1 when a named package does not exist, and 3 on I/O errors.
 
 ### `stau clean <package>` (alias: `c`)
 
@@ -257,6 +319,12 @@ Scripts receive these environment variables:
 | `STAU_DIR`     | Path to your dotfiles directory                                        |
 | `STAU_PACKAGE` | Current package name                                                   |
 | `STAU_TARGET`  | Target directory for symlinks (use this instead of hardcoding `$HOME`) |
+
+Scripts inherit the terminal, so they may prompt for input and their output is shown as it is produced. For automation:
+
+- `--set KEY=VALUE` (repeatable) adds environment variables to the script process.
+- `--non-interactive` connects the script's stdin to `/dev/null`, so a prompting hook fails immediately instead of blocking.
+- `--script-timeout <DUR>` kills a script that runs longer than the given duration (e.g. `30s`, `5m`, `500ms`). A timeout is reported as a script failure (exit code 4).
 
 ### Example setup.sh
 
@@ -326,6 +394,37 @@ stau install ghostty --target /tmp/test
 - **System configs**: Manage `/etc` or other system directories
 - **Multiple users**: Install configs for different users
 
+## Profiles
+
+A profile is an ordered package list stored as a plain text file at `<STAU_DIR>/profiles/<name>`. Blank lines and lines starting with `#` are ignored; every other line names one package. The order of the lines is the order packages are processed, which is what lets a profile express dependency order for hooks (e.g. `mise` before `sesh`).
+
+```bash
+stau install --profile headless
+stau uninstall --profile headless
+stau restow --profile headless
+```
+
+Example `profiles/headless`:
+
+```
+# base tooling first
+mise
+ripgrep
+sesh
+```
+
+The `profiles` directory itself is never treated as a package by `--all`, `list`, or `status --json`.
+
+## Machine-readable Output
+
+Three commands produce stable machine-readable output:
+
+- `stau status --json [<package>...]` prints one JSON object with `stau_dir`, `target`, and a `packages` array of per-package state, counts, and files.
+- `stau verify [--json] <package>...` prints per-file mismatches; with `--json` it prints `{"ok": bool, "packages": [...]}` and exits 5 on any mismatch.
+- `stau install|uninstall|restow --json` print a summary object `{"ok": bool, "packages": [{"name", "ok", "error"}]}` on stdout, also when some packages failed (the command still exits 1).
+
+In `--json` mode stau suppresses its own human output, but hook scripts still inherit the terminal; keep scripts quiet or redirect their output when parsing stdout.
+
 ## Exit Codes
 
 stau uses specific exit codes to indicate different error conditions:
@@ -336,7 +435,8 @@ stau uses specific exit codes to indicate different error conditions:
 | 1    | Package not found, STAU_DIR not found, invalid path, or general error |
 | 2    | Conflicting file exists                                               |
 | 3    | Permission denied or I/O error                                        |
-| 4    | Setup script failed                                                   |
+| 4    | Setup script failed (including a script timeout)                      |
+| 5    | `verify` found a file not in the expected state                       |
 
 With `--all`, every package is processed even if some fail. The command then exits with code 1 if any package failed.
 

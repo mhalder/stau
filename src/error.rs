@@ -49,6 +49,9 @@ pub enum StauError {
         source: io::Error,
     },
 
+    #[error("Verification failed: {0}")]
+    VerifyMismatch(String),
+
     #[error("{0}")]
     Other(String),
 
@@ -71,6 +74,7 @@ impl StauError {
             StauError::IoWithContext { .. } => 3,
             StauError::Other(_) => 1,
             StauError::InvalidArguments(_) => 1,
+            StauError::VerifyMismatch(_) => 5,
         }
     }
 }

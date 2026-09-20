@@ -2613,3 +2613,501 @@ fn test_clean_deep_finds_links_below_removed_directories() {
     assert!(stale.symlink_metadata().is_err(), "stale link removed");
     assert!(target_dir.join(".apprc").is_symlink());
 }
+
+// =============================================================================
+// Tests for automation CLI features (multi-package, profiles, JSON, verify,
+// non-interactive/timeout/env script options)
+// =============================================================================
+
+#[test]
+fn test_install_multiple_packages_in_given_order() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let marker = target_dir.join("order.txt");
+    for pkg in ["zebra", "alpha", "mike"] {
+        let pkg_dir = stau_dir.join(pkg);
+        fs::create_dir_all(&pkg_dir).unwrap();
+        create_script(
+            &pkg_dir.join("setup.sh"),
+            &format!("#!/bin/bash\necho {pkg} >> {}\n", marker.display()),
+        );
+    }
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "mike", "zebra", "alpha"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "install failed: {output:?}");
+    let contents = fs::read_to_string(&marker).unwrap();
+    let order: Vec<&str> = contents.lines().collect();
+    assert_eq!(order, vec!["mike", "zebra", "alpha"]);
+}
+
+#[test]
+fn test_install_all_is_alphabetical() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let marker = target_dir.join("order.txt");
+    for pkg in ["zebra", "alpha", "mike"] {
+        let pkg_dir = stau_dir.join(pkg);
+        fs::create_dir_all(&pkg_dir).unwrap();
+        create_script(
+            &pkg_dir.join("setup.sh"),
+            &format!("#!/bin/bash\necho {pkg} >> {}\n", marker.display()),
+        );
+    }
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "--all"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "install --all failed: {output:?}");
+    let contents = fs::read_to_string(&marker).unwrap();
+    let order: Vec<&str> = contents.lines().collect();
+    assert_eq!(order, vec!["alpha", "mike", "zebra"]);
+}
+
+#[test]
+fn test_install_profile_preserves_order() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let marker = target_dir.join("order.txt");
+    for pkg in ["mise", "sesh", "git"] {
+        let pkg_dir = stau_dir.join(pkg);
+        fs::create_dir_all(&pkg_dir).unwrap();
+        create_script(
+            &pkg_dir.join("setup.sh"),
+            &format!("#!/bin/bash\necho {pkg} >> {}\n", marker.display()),
+        );
+    }
+
+    let profiles_dir = stau_dir.join("profiles");
+    fs::create_dir_all(&profiles_dir).unwrap();
+    fs::write(
+        profiles_dir.join("headless"),
+        "# ordering matters\n\nmise\nsesh\n\ngit\n",
+    )
+    .unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "--profile", "headless"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "install --profile failed: {output:?}"
+    );
+    let contents = fs::read_to_string(&marker).unwrap();
+    let order: Vec<&str> = contents.lines().collect();
+    assert_eq!(order, vec!["mise", "sesh", "git"]);
+}
+
+#[test]
+fn test_profiles_directory_is_not_a_package() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+    let profiles_dir = stau_dir.join("profiles");
+    fs::create_dir_all(&profiles_dir).unwrap();
+    fs::write(profiles_dir.join("headless"), "vim\n").unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["list"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("vim"));
+    assert!(!stdout.contains("profiles"), "stdout: {stdout}");
+}
+
+#[test]
+fn test_status_json() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let pkg_dir = stau_dir.join("vim");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+    create_script(&pkg_dir.join("setup.sh"), "#!/bin/bash\ntrue\n");
+
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim"])
+        .output()
+        .unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["status", "--json", "vim"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "status --json failed: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    assert_eq!(value["stau_dir"], stau_dir.display().to_string());
+    assert_eq!(value["target"], target_dir.display().to_string());
+
+    let package = &value["packages"][0];
+    assert_eq!(package["name"], "vim");
+    assert_eq!(package["state"], "installed");
+    assert_eq!(package["setup_script"], true);
+    assert_eq!(package["teardown_script"], false);
+    assert_eq!(package["counts"]["installed"], 1);
+    assert_eq!(package["counts"]["not_installed"], 0);
+    assert_eq!(package["counts"]["conflict"], 0);
+    assert_eq!(package["counts"]["broken"], 0);
+
+    let file = &package["files"][0];
+    assert_eq!(file["rel"], ".vimrc");
+    assert_eq!(file["state"], "installed");
+    assert_eq!(
+        file["target"],
+        target_dir.join(".vimrc").display().to_string()
+    );
+}
+
+#[test]
+fn test_status_json_restored_after_uninstall() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    assert!(run(&["install", "vim"]).status.success());
+    assert!(run(&["uninstall", "vim"]).status.success());
+
+    let output = run(&["status", "--json", "vim"]);
+    assert!(output.status.success(), "status --json failed: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    let package = &value["packages"][0];
+    assert_eq!(package["state"], "not_installed");
+    assert_eq!(package["files"][0]["state"], "restored");
+}
+
+#[test]
+fn test_verify_installed_and_uninstalled() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    // Not installed yet: verify installed fails with 5
+    let output = run(&["verify", "--expect", "installed", "vim"]);
+    assert_eq!(output.status.code(), Some(5), "output: {output:?}");
+
+    assert!(run(&["install", "vim"]).status.success());
+
+    // Installed: verify installed passes
+    assert!(
+        run(&["verify", "--expect", "installed", "vim"])
+            .status
+            .success()
+    );
+    // ...but verify uninstalled fails with 5
+    assert_eq!(
+        run(&["verify", "--expect", "uninstalled", "vim"])
+            .status
+            .code(),
+        Some(5)
+    );
+
+    assert!(run(&["uninstall", "vim"]).status.success());
+
+    // Copy-back contract: verify uninstalled passes, verify installed fails
+    assert!(
+        run(&["verify", "--expect", "uninstalled", "vim"])
+            .status
+            .success()
+    );
+    assert_eq!(
+        run(&["verify", "--expect", "installed", "vim"])
+            .status
+            .code(),
+        Some(5)
+    );
+}
+
+#[test]
+fn test_verify_json() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["verify", "--json", "vim"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(5), "output: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["packages"][0]["name"], "vim");
+    assert_eq!(value["packages"][0]["ok"], false);
+    assert_eq!(value["packages"][0]["mismatches"][0]["rel"], ".vimrc");
+    assert_eq!(
+        value["packages"][0]["mismatches"][0]["expected"],
+        "installed"
+    );
+    assert_eq!(
+        value["packages"][0]["mismatches"][0]["actual"],
+        "not_installed"
+    );
+}
+
+#[test]
+fn test_verify_package_not_found() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["verify", "nonexistent"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1), "output: {output:?}");
+}
+
+#[test]
+fn test_non_interactive_script_stdin_is_null() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let pkg_dir = stau_dir.join("pkg");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    let got = target_dir.join("got");
+    let eof = target_dir.join("eof");
+    create_script(
+        &pkg_dir.join("setup.sh"),
+        &format!(
+            "#!/bin/bash\nif read -r line; then echo \"got:$line\" > {}; else touch {}; fi\n",
+            got.display(),
+            eof.display()
+        ),
+    );
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "pkg", "--non-interactive"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "install failed: {output:?}");
+    assert!(eof.exists(), "read should hit EOF with /dev/null stdin");
+    assert!(!got.exists());
+}
+
+#[test]
+fn test_script_timeout() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let pkg_dir = stau_dir.join("pkg");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    create_script(&pkg_dir.join("setup.sh"), "#!/bin/bash\nsleep 30\n");
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "pkg", "--script-timeout", "100ms"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4), "output: {output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("timed out"), "stderr: {stderr}");
+}
+
+#[test]
+fn test_set_env_passed_to_script() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    let pkg_dir = stau_dir.join("pkg");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    let out = target_dir.join("env.txt");
+    create_script(
+        &pkg_dir.join("setup.sh"),
+        &format!("#!/bin/bash\necho \"$MY_VAR\" > {}\n", out.display()),
+    );
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "pkg", "--set", "MY_VAR=hello"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "install failed: {output:?}");
+    assert_eq!(fs::read_to_string(&out).unwrap().trim(), "hello");
+}
+
+#[test]
+fn test_restow_all() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+    create_test_package(&stau_dir, "git", &[".gitconfig"]);
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    assert!(run(&["install", "--all"]).status.success());
+    let output = run(&["restow", "--all"]);
+    assert!(output.status.success(), "restow --all failed: {output:?}");
+    assert!(target_dir.join(".vimrc").is_symlink());
+    assert!(target_dir.join(".gitconfig").is_symlink());
+}
+
+#[test]
+fn test_install_all_json_summary() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+    create_test_package(&stau_dir, "git", &[".gitconfig"]);
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "--all", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "install --all --json failed: {output:?}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["packages"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn test_install_json_summary_reports_failures() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+    create_test_package(&stau_dir, "git", &[".gitconfig"]);
+    fs::write(target_dir.join(".vimrc"), "conflict").unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "--all", "--json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1), "output: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(value["ok"], false);
+    let packages = value["packages"].as_array().unwrap();
+    let failed = packages
+        .iter()
+        .find(|p| p["ok"] == false)
+        .expect("one package failed");
+    assert_eq!(failed["name"], "vim");
+    assert!(failed["error"].as_str().unwrap().contains("Conflicting"));
+}

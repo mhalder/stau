@@ -5,7 +5,9 @@ mod cli;
 mod commands;
 mod config;
 mod error;
+mod options;
 mod package;
+mod profile;
 mod script;
 mod symlink;
 
