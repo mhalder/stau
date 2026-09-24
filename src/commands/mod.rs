@@ -89,7 +89,7 @@ pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool
             Config::validate_package_name(&package)?;
             adopt::adopt_files(config, &package, &files, target, dry_run, verbose)
         }
-        Commands::List { target } => list::list_packages(config, target),
+        Commands::List { target, long } => list::list_packages(config, target, long),
         Commands::Status {
             package,
             target,

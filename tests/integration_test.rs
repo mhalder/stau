@@ -218,10 +218,16 @@ fn test_list_command() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("vim"));
-    assert!(stdout.contains("git"));
-    assert!(stdout.contains("[installed]"));
-    assert!(stdout.contains("[not installed]"));
+    let vim_row = stdout
+        .lines()
+        .find(|line| line.contains("vim"))
+        .expect("vim row");
+    assert!(vim_row.contains("ok"), "vim row: {vim_row}");
+    let git_row = stdout
+        .lines()
+        .find(|line| line.contains("git"))
+        .expect("git row");
+    assert!(git_row.contains("missing"), "git row: {git_row}");
 }
 
 #[test]
@@ -703,7 +709,7 @@ fn test_partial_install_status() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("vim"));
-    assert!(stdout.contains("[partial]") || stdout.contains("1/2"));
+    assert!(stdout.contains("1/2 links"), "stdout: {stdout}");
 }
 
 #[test]
@@ -1306,8 +1312,11 @@ fn test_list_with_target_flag() {
 
     assert!(output.status.success(), "List with --target failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("vim"));
-    assert!(stdout.contains("[installed]"));
+    let vim_row = stdout
+        .lines()
+        .find(|line| line.contains("vim"))
+        .expect("vim row");
+    assert!(vim_row.contains("ok"), "vim row: {vim_row}");
 }
 
 #[test]
@@ -2266,7 +2275,7 @@ fn test_clean_removes_only_stale_package_symlinks() {
 
     let list = run(&["list"]);
     let stdout = String::from_utf8_lossy(&list.stdout);
-    assert!(stdout.contains("(2 broken)"), "list: {stdout}");
+    assert!(stdout.contains("2 broken"), "list: {stdout}");
 
     let clean = run(&["clean", "vim"]);
     assert!(clean.status.success(), "clean: {clean:?}");
@@ -2889,7 +2898,80 @@ fn test_list_hook_only_package() {
 
     assert!(output.status.success(), "list failed: {output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("[hook only]"), "stdout: {stdout}");
+    let row = stdout
+        .lines()
+        .find(|line| line.contains("hookonly"))
+        .expect("hookonly row");
+    assert!(row.contains("hook"), "hookonly row: {row}");
+    assert!(row.contains("setup"), "hookonly row: {row}");
+}
+
+#[test]
+fn test_list_long_shows_link_counts() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc", ".gvimrc"]);
+    let _ = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["install", "vim"])
+        .output()
+        .unwrap();
+
+    let plain = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["list"])
+        .output()
+        .unwrap();
+    let plain = String::from_utf8_lossy(&plain.stdout);
+    assert!(
+        !plain.contains("2 links"),
+        "default list should stay quiet: {plain}"
+    );
+
+    let long = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["list", "--long"])
+        .output()
+        .unwrap();
+    assert!(long.status.success(), "list --long failed: {long:?}");
+    let long = String::from_utf8_lossy(&long.stdout);
+    assert!(long.contains("2 links"), "list --long: {long}");
+}
+
+#[test]
+fn test_list_reports_conflict_state() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+    // A regular file at the target path is a conflict: stau will not overwrite it.
+    fs::write(target_dir.join(".vimrc"), "not managed by stau\n").unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["list"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "list failed: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let row = stdout
+        .lines()
+        .find(|line| line.contains("vim"))
+        .expect("vim row");
+    assert!(row.contains("conflict"), "vim row: {row}");
+    assert!(stdout.contains("1 conflict"), "summary: {stdout}");
 }
 
 #[test]

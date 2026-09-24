@@ -208,28 +208,39 @@ stau adopt tmux ~/.tmux.conf --dry-run       # Preview adoption
 
 ### `stau list` (aliases: `l`, `ls`)
 
-Shows all packages in your dotfiles directory and their installation status. A package with no files, only setup/teardown hooks, is shown as `[hook only]`: it has no symlinks to report, and installing it means running its hooks.
+Shows all packages in your dotfiles directory and their installation status. Each package is one row: a short state token and, only when it adds information, a note column.
+
+The state is `ok` (every file linked), `partial` (some files linked), `missing` (no files linked), `conflict` (a target path is occupied by something stau did not create), or `hook` (no files to link, only setup/teardown hooks). Because stau does not record hook runs, `hook` describes the package's shape rather than an observed installation.
+
+Notes report link counts for anything that is not `ok`, the hooks of a `hook` package, and any broken links — stale symlinks left behind by files removed from the package. `--long` adds the link count and hooks to every row. A summary line tallies the states and any broken links.
 
 ```bash
 stau list                           # List all packages
+stau list --long                    # Include link counts and hooks for every package
 stau list --target /tmp/test        # Check status against custom target
 ```
 
 **Output example:**
 
 ```
-Packages in /home/user/dotfiles:
+Packages in /home/user/dotfiles
+Target: /home/user
 
-  ghostty              [installed]  1 symlink
-  git                  [installed]  1 symlink
-  tmux                 [not installed]
-  hookonly             [hook only]
+  ghostty   ok
+  git       ok
+  hookonly  hook     setup
+  sway      partial  2/3 links
+  tmux      missing  0/2 links
+  yazi      ok       2 broken
+
+3 ok, 1 partial, 1 missing, 0 conflict, 1 hook-only; 2 broken links
 ```
 
 **Options:**
 | Flag | Description |
 |------|-------------|
 | `-t, --target <DIR>` | Target directory to check status against |
+| `-l, --long` | Show link counts and hooks for every package |
 
 ### `stau status <package...>` (alias: `s`)
 

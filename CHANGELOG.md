@@ -1,3 +1,13 @@
+## [Unreleased]
+
+### ⚠ BREAKING CHANGES
+
+* **list:** the human-readable output changed from bracketed labels (`[installed]`, `[not installed]`, `[partial]`, `[hook only]`) to a per-package state token (`ok`, `partial`, `missing`, `conflict`, `hook`) with a notes column. Scripts that parse `stau list` must be updated; `stau status --json` remains the machine-readable interface.
+
+### Features
+
+* **list:** report each package as one aligned row with a short state token and a notes column, and add `--long` (`-l`) to show link counts and hooks for every package
+
 ## [3.1.1](https://github.com/mhalder/stau/compare/v3.1.0...v3.1.1) (2026-03-16)
 
 ### Bug Fixes

@@ -160,6 +160,10 @@ pub enum Commands {
         /// Target directory to check status (default: $HOME or $STAU_TARGET)
         #[arg(short, long, env = "STAU_TARGET")]
         target: Option<PathBuf>,
+
+        /// Show the link count for every package, not only the ones needing attention
+        #[arg(short = 'l', long)]
+        long: bool,
     },
 
     /// Show detailed status for one or more packages
