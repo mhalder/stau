@@ -15,7 +15,24 @@ use cli::{Cli, Commands};
 use config::Config;
 use error::Result;
 
+/// Restores the default `SIGPIPE` disposition.
+///
+/// The Rust runtime sets `SIGPIPE` to `SIG_IGN`, which turns a closed pipe
+/// (`stau status pkg | head`) into a write error that `println!` and the
+/// completion generator unwrap into a panic and exit code 101. With the
+/// default disposition the process is terminated by the signal instead, the
+/// way every other Unix command behaves.
+fn restore_sigpipe() {
+    // SAFETY: called before any thread is spawned, and SIG_DFL is the
+    // disposition the process would have had without the Rust runtime.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
 fn main() {
+    restore_sigpipe();
+
     let cli = Cli::parse();
 
     if let Err(e) = run(cli) {

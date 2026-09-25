@@ -1,8 +1,9 @@
 use std::fs::{self, File};
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use tempfile::TempDir;
 
 /// Helper to get the path to the stau binary
@@ -3561,4 +3562,37 @@ fn test_completion_rejects_unknown_shell() {
         .unwrap();
 
     assert_eq!(output.status.code(), Some(2), "output: {output:?}");
+}
+
+#[test]
+fn test_closed_pipe_exits_by_signal_without_panicking() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    // Enough files that the output cannot fit in the 64 KiB pipe buffer, so
+    // the write hits the closed read end even if the reader closes late.
+    let files: Vec<String> = (0..2000).map(|i| format!(".conf{i}")).collect();
+    let files: Vec<&str> = files.iter().map(String::as_str).collect();
+    create_test_package(&stau_dir, "big", &files);
+
+    let mut child = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .args(["status", "big"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // Close the read end, the way `| head -1` does after its first lines.
+    drop(child.stdout.take());
+    let output = child.wait_with_output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("panicked"), "stderr: {stderr}");
+    assert_eq!(output.status.code(), None, "stderr: {stderr}");
+    assert_eq!(output.status.signal(), Some(13), "expected SIGPIPE");
 }

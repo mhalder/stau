@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **cli:** add `stau completion <shell>`, printing a static completion script for bash, elvish, fish, powershell, or zsh; it runs without a `STAU_DIR`
 * **cli:** hint `--target` as a directory and `adopt` file arguments as paths, so shells complete paths for them
 
+### Bug Fixes
+
+* **cli:** restore the default `SIGPIPE` disposition, so piping long output into a command that exits early (`stau status pkg | head`) terminates the way any Unix command does instead of panicking with exit code 101
+
 ## [3.1.1](https://github.com/mhalder/stau/compare/v3.1.0...v3.1.1) (2026-03-16)
 
 ### Bug Fixes
