@@ -3533,3 +3533,32 @@ fn test_set_rejects_stau_own_variables() {
         assert!(stderr.contains("cannot override"), "stderr: {stderr}");
     }
 }
+
+#[test]
+fn test_completion_works_without_a_stau_dir() {
+    let temp_dir = TempDir::new().unwrap();
+    let missing = temp_dir.path().join("does-not-exist");
+
+    for (shell, needle) in [("zsh", "#compdef stau"), ("fish", "complete -c stau")] {
+        let output = Command::new(stau_binary())
+            .env("STAU_DIR", &missing)
+            .args(["completion", shell])
+            .output()
+            .unwrap();
+
+        assert!(output.status.success(), "{shell} failed: {output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains(needle), "{shell} script: {stdout}");
+        assert!(stdout.contains("install"), "{shell} script: {stdout}");
+    }
+}
+
+#[test]
+fn test_completion_rejects_unknown_shell() {
+    let output = Command::new(stau_binary())
+        .args(["completion", "nushell"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2), "output: {output:?}");
+}

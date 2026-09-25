@@ -1,4 +1,5 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum, ValueHint};
+use clap_complete::Shell;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -60,7 +61,7 @@ pub enum Commands {
         profile: Option<String>,
 
         /// Target directory (default: $HOME or $STAU_TARGET)
-        #[arg(short, long, env = "STAU_TARGET")]
+        #[arg(short, long, env = "STAU_TARGET", value_hint = ValueHint::DirPath)]
         target: Option<PathBuf>,
 
         /// Skip running setup script
@@ -90,7 +91,7 @@ pub enum Commands {
         profile: Option<String>,
 
         /// Target directory (default: $HOME or $STAU_TARGET)
-        #[arg(short, long, env = "STAU_TARGET")]
+        #[arg(short, long, env = "STAU_TARGET", value_hint = ValueHint::DirPath)]
         target: Option<PathBuf>,
 
         /// Skip running teardown script
@@ -120,7 +121,7 @@ pub enum Commands {
         profile: Option<String>,
 
         /// Target directory (default: $HOME or $STAU_TARGET)
-        #[arg(short, long, env = "STAU_TARGET")]
+        #[arg(short, long, env = "STAU_TARGET", value_hint = ValueHint::DirPath)]
         target: Option<PathBuf>,
 
         /// Skip running setup script
@@ -146,11 +147,11 @@ pub enum Commands {
         package: String,
 
         /// File paths to adopt
-        #[arg(required = true)]
+        #[arg(required = true, value_hint = ValueHint::AnyPath)]
         files: Vec<PathBuf>,
 
         /// Target directory (default: $HOME or $STAU_TARGET)
-        #[arg(short, long, env = "STAU_TARGET")]
+        #[arg(short, long, env = "STAU_TARGET", value_hint = ValueHint::DirPath)]
         target: Option<PathBuf>,
     },
 
@@ -158,7 +159,7 @@ pub enum Commands {
     #[command(visible_alias = "l", visible_alias = "ls")]
     List {
         /// Target directory to check status (default: $HOME or $STAU_TARGET)
-        #[arg(short, long, env = "STAU_TARGET")]
+        #[arg(short, long, env = "STAU_TARGET", value_hint = ValueHint::DirPath)]
         target: Option<PathBuf>,
 
         /// Show the link count for every package, not only the ones needing attention
@@ -174,7 +175,7 @@ pub enum Commands {
         package: Vec<String>,
 
         /// Target directory to check status (default: $HOME or $STAU_TARGET)
-        #[arg(short, long, env = "STAU_TARGET")]
+        #[arg(short, long, env = "STAU_TARGET", value_hint = ValueHint::DirPath)]
         target: Option<PathBuf>,
 
         /// Print a machine-readable JSON status envelope
@@ -194,7 +195,7 @@ pub enum Commands {
         expect: Expect,
 
         /// Target directory to check (default: $HOME or $STAU_TARGET)
-        #[arg(short, long, env = "STAU_TARGET")]
+        #[arg(short, long, env = "STAU_TARGET", value_hint = ValueHint::DirPath)]
         target: Option<PathBuf>,
 
         /// Print mismatches as a machine-readable JSON object
@@ -209,11 +210,18 @@ pub enum Commands {
         package: String,
 
         /// Target directory to clean (default: $HOME or $STAU_TARGET)
-        #[arg(short, long, env = "STAU_TARGET")]
+        #[arg(short, long, env = "STAU_TARGET", value_hint = ValueHint::DirPath)]
         target: Option<PathBuf>,
 
         /// Scan the whole target directory tree, also finding links below directories removed from the package (slower)
         #[arg(long)]
         deep: bool,
+    },
+
+    /// Print a shell completion script to stdout
+    Completion {
+        /// Shell to generate the completion script for
+        #[arg(value_enum)]
+        shell: Shell,
     },
 }

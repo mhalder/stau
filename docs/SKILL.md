@@ -33,8 +33,9 @@ stau links the files of a package directory in a dotfiles repository (`STAU_DIR`
 | Move existing files into a package and link them | `stau adopt <package> <file>...` |
 | Remove broken links left by files deleted from a package | `stau clean <package>` |
 | Check that every file of a package is in a given state | `stau verify --expect installed <package>` |
+| Print a shell completion script | `stau completion <bash\|zsh\|fish\|elvish\|powershell>` |
 
-Flags: `--no-setup` and `--no-teardown` skip scripts, `-t, --target <dir>` overrides the target directory, and `-v, --verbose` explains each step. `install`, `uninstall`, and `restow` accept a package list, `--all`, or `--profile <name>`, and `--json` for a machine-readable summary. `--set KEY=VALUE` (repeatable) adds environment variables to hook scripts, `--non-interactive` connects their stdin to `/dev/null`, and `--script-timeout <dur>` (e.g. `30s`, `5m`) kills one that runs too long. `uninstall` also accepts `--all`, and `clean --deep` also finds links below directories removed from the package.
+Flags: `--no-setup` and `--no-teardown` skip scripts, `-t, --target <dir>` overrides the target directory, and `-v, --verbose` explains each step. `install`, `uninstall`, and `restow` accept a package list, `--all`, or `--profile <name>`, and `--json` for a machine-readable summary. `--set KEY=VALUE` (repeatable) adds environment variables to hook scripts, `--non-interactive` connects their stdin to `/dev/null`, and `--script-timeout <dur>` (e.g. `30s`, `5m`) kills one that runs too long. `uninstall` also accepts `--all`, and `clean --deep` also finds links below directories removed from the package. `completion` needs no `STAU_DIR` and writes the script to stdout.
 
 ## Rules
 

@@ -11,7 +11,7 @@ mod profile;
 mod script;
 mod symlink;
 
-use cli::Cli;
+use cli::{Cli, Commands};
 use config::Config;
 use error::Result;
 
@@ -29,6 +29,13 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<()> {
+    // Completion scripts must be printable before any dotfiles directory
+    // exists, so this runs before Config::new(), which fails without STAU_DIR.
+    if let Commands::Completion { shell } = cli.command {
+        commands::print_completion(shell, &mut std::io::stdout());
+        return Ok(());
+    }
+
     let config = Config::new()?;
 
     if cli.verbose {

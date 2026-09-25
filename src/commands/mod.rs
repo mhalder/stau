@@ -1,12 +1,15 @@
 mod adopt;
 mod batch;
 mod clean;
+mod completion;
 mod install;
 mod list;
 mod restow;
 mod status;
 mod uninstall;
 mod verify;
+
+pub use completion::print_completion;
 
 use crate::cli::{Commands, ScriptArgs};
 use crate::config::Config;
@@ -108,6 +111,12 @@ pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool
         } => {
             Config::validate_package_name(&package)?;
             clean::clean_broken_symlinks(config, &package, target, deep, dry_run, verbose)
+        }
+        // Normally handled before the config is loaded, since completion must
+        // work without a STAU_DIR; kept here so dispatch covers every command.
+        Commands::Completion { shell } => {
+            print_completion(shell, &mut std::io::stdout());
+            Ok(())
         }
     }
 }

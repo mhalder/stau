@@ -316,6 +316,23 @@ stau clean ghostty --verbose            # Show each symlink being removed
 | `-n, --dry-run` | Show what would be done without making changes |
 | `-v, --verbose` | Show detailed output |
 
+### `stau completion <shell>`
+
+Prints a shell completion script to stdout. Supported shells: `bash`, `elvish`, `fish`, `powershell`, `zsh`. The script completes subcommands, their aliases, flags, `--expect` values, and directory paths for `--target`; it does not complete package names.
+
+```bash
+# zsh: any directory on $fpath, then restart the shell (or rerun compinit)
+stau completion zsh > ~/.zsh/completions/_stau
+
+# fish
+stau completion fish > ~/.config/fish/completions/stau.fish
+
+# bash
+stau completion bash > ~/.local/share/bash-completion/completions/stau
+```
+
+This command works without a dotfiles directory, so it can be run before `STAU_DIR` exists — for example from a package's `setup.sh`.
+
 ## Setup and Teardown Scripts
 
 Each package can have optional automation scripts:
