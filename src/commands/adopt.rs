@@ -53,6 +53,21 @@ pub fn adopt_files(
         return Ok(());
     }
 
+    // With --template, validate that every candidate renders before moving
+    // anything: a file with literal `{{ }}` (GitHub Actions, helm, go
+    // templates) must fail here, not after the move has stranded it in the
+    // package. This keeps multi-file adopt all-or-nothing.
+    if options.template {
+        for (file_path, _) in &adoptions {
+            template::render(file_path, options.data).map_err(|e| {
+                error::StauError::TemplateError(format!(
+                    "cannot render adopted template {}: {e}",
+                    file_path.display()
+                ))
+            })?;
+        }
+    }
+
     ensure_package_dir(&package_dir, dry_run, verbose)?;
 
     for (file_path, dest) in &adoptions {
