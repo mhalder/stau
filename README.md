@@ -482,6 +482,8 @@ Templates see the deep-merged result of these sources (lowest to highest precede
 
 A missing file is not an error; a present file that fails to parse is a template error (exit 6) naming the path.
 
+`--set` is a one-off override for the current invocation. Values a template needs on every later run (`status`, `verify`, `list`, and the `uninstall` drift warning) belong in `.stau/data.toml` or `machine.toml`; otherwise each command must re-supply the same `--set`. `list` does not accept `--set`.
+
 ### Commands
 
 ```bash
