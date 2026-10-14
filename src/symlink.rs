@@ -245,18 +245,25 @@ pub fn rendered_differs(target: &Path, content: &str) -> Result<bool> {
 /// Writes a rendered file at `target`, preserving the source's permission bits.
 ///
 /// If the target already exists as a regular file with bytes equal to `content`,
-/// this is a no-op. If it exists as anything else (symlink, directory, special
-/// file) or as a regular file with different bytes, this returns
+/// only its permission bits are converged to the source's (so a `chmod -x` is
+/// repaired). If it exists as anything else (symlink, directory, special file)
+/// or as a regular file with different bytes, this returns
 /// [`StauError::ConflictingFile`]. Otherwise the bytes are written atomically
 /// (a temporary file in the same directory, then `fs::rename`) and the target's
 /// permission bits are copied from `source` so the executable bit is preserved.
 pub fn write_rendered(source: &Path, target: &Path, content: &str, dry_run: bool) -> Result<()> {
-    if rendered_is_current(target, content)? {
-        return Ok(());
-    }
-
-    if target.symlink_metadata().is_ok() {
-        return Err(StauError::ConflictingFile(target.to_path_buf()));
+    match target.symlink_metadata() {
+        Ok(metadata) if metadata.is_file() => {
+            if !same_bytes(target, content)? {
+                return Err(StauError::ConflictingFile(target.to_path_buf()));
+            }
+            if dry_run {
+                return Ok(());
+            }
+            return set_permissions_from_source(source, target);
+        }
+        Ok(_) => return Err(StauError::ConflictingFile(target.to_path_buf())),
+        Err(_) => {}
     }
 
     if dry_run {
@@ -270,14 +277,16 @@ pub fn write_rendered(source: &Path, target: &Path, content: &str, dry_run: bool
     }
 
     write_atomic(target, content.as_bytes())?;
+    set_permissions_from_source(source, target)
+}
 
+/// Copies the permission bits of `source` onto `target`.
+fn set_permissions_from_source(source: &Path, target: &Path) -> Result<()> {
     let permissions = fs::metadata(source)
         .map_err(|e| map_io_error(e, format!("Cannot read metadata: {}", source.display())))?
         .permissions();
     fs::set_permissions(target, permissions)
-        .map_err(|e| map_io_error(e, format!("Cannot set permissions: {}", target.display())))?;
-
-    Ok(())
+        .map_err(|e| map_io_error(e, format!("Cannot set permissions: {}", target.display())))
 }
 
 /// Removes a rendered file, and only a rendered file.
@@ -716,6 +725,25 @@ mod tests {
 
         write_rendered(&source, &target, "same", false).unwrap();
         assert_eq!(fs::read_to_string(&target).unwrap(), "same");
+    }
+
+    #[test]
+    fn test_write_rendered_repairs_mode_when_bytes_equal() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("src.tmpl");
+        let target = temp_dir.path().join("target");
+        fs::write(&source, "content").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(&target, "content").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_rendered(&source, &target, "content", false).unwrap();
+
+        let mode = fs::metadata(&target).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111, "executable bits repaired");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "content");
     }
 
     #[test]

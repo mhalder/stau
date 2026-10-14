@@ -498,7 +498,7 @@ stau adopt git ~/.gitconfig --template   # adopt as a template and render it bac
 
 ### v1 tradeoffs
 
-A rendered target is a plain regular file, so it is not live: editing the target does not change the template, and a later `status` reports the file as `drift`. Re-render with `restow` (or `install` again, which leaves an up-to-date file alone). `uninstall` removes the rendered file and never copies the template back; if the target's bytes differ from the current render, a warning reports that local modifications were discarded. Put machine-specific values in `machine.toml` so `status`, `verify`, and `list` can re-render them; `--set` values are ephemeral and must be re-supplied to those commands.
+A rendered target is a plain regular file, so it is not live: editing the target does not change the template, and a later `status` reports the file as `drift`. Re-render with `restow` (or `install` again, which leaves an up-to-date file alone). `uninstall` removes the rendered file and never copies the template back; if the target's bytes differ from the current render, a warning reports that local modifications were discarded. Put machine-specific values in `machine.toml` so `status`, `verify`, and `list` can re-render them; `--set` values are ephemeral and must be re-supplied to those commands. Comparison is byte-based (`status`/`verify`), and `install` restores the source file's mode even when the bytes already match.
 
 ## Profiles
 

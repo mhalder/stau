@@ -253,17 +253,25 @@ fn read_trimmed(path: &str) -> Option<String> {
 /// Parses `/etc/os-release` into a map of lowercased, quote-stripped values.
 fn read_os_release() -> Option<Value> {
     let contents = fs::read_to_string("/etc/os-release").ok()?;
+    Some(parse_os_release(&contents))
+}
+
+/// Parses os-release contents; a malformed line (no `=`) is skipped so it does
+/// not drop the whole map.
+fn parse_os_release(contents: &str) -> Value {
     let mut map = Map::new();
     for line in contents.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let (key, value) = line.split_once('=')?;
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
         let value = value.trim().trim_matches(|c| c == '"' || c == '\'');
         map.insert(key.to_lowercase(), Value::String(value.to_string()));
     }
-    Some(Value::Object(map))
+    Value::Object(map)
 }
 
 #[cfg(test)]
@@ -454,6 +462,16 @@ mod tests {
             let err = parse_sets(&[format!("{var}=x")]).unwrap_err();
             assert!(matches!(err, StauError::InvalidArguments(_)), "got {err:?}");
         }
+    }
+
+    #[test]
+    fn test_parse_os_release_tolerates_malformed_line() {
+        let value = parse_os_release(
+            "ID=ubuntu\nTHIS LINE HAS NO EQUALS SIGN\nPRETTY_NAME=\"Ubuntu 26.04\"\n",
+        );
+        assert_eq!(value["id"], "ubuntu");
+        assert_eq!(value["pretty_name"], "Ubuntu 26.04");
+        assert!(value.get("THIS LINE HAS NO EQUALS SIGN").is_none());
     }
 
     #[test]
