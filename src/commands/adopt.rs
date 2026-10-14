@@ -17,9 +17,10 @@ pub struct AdoptOptions<'a> {
 ///
 /// Every file is checked before any is moved, so a conflict does not leave the
 /// package partially adopted. With `options.template`, the destination inside
-/// the package becomes `<rel>.tmpl`, and after moving the file the original
-/// target is written as a rendered regular file from that template using
-/// `options.data`.
+/// the package becomes `<rel>.tmpl`; each template is rendered exactly once,
+/// up front, and the captured content is written back to the original target
+/// after the move (so a concurrent write between check and move cannot strand
+/// the file in the package).
 pub fn adopt_files(
     config: &Config,
     package: &str,
@@ -38,13 +39,13 @@ pub fn adopt_files(
         package
     );
 
-    let mut adoptions: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut adoptions: Vec<(PathBuf, PathBuf, Option<String>)> = Vec::new();
     for file_path in files {
         if let Some(adoption) =
             adopt_destination(file_path, &target_dir, &package_dir, options.template)?
-            && !adoptions.iter().any(|(_, dest)| *dest == adoption.1)
+            && !adoptions.iter().any(|(_, dest, _)| *dest == adoption.1)
         {
-            adoptions.push(adoption);
+            adoptions.push((adoption.0, adoption.1, None));
         }
     }
 
@@ -53,30 +54,27 @@ pub fn adopt_files(
         return Ok(());
     }
 
-    // With --template, validate that every candidate renders before moving
-    // anything: a file with literal `{{ }}` (GitHub Actions, helm, go
-    // templates) must fail here, not after the move has stranded it in the
-    // package. This keeps multi-file adopt all-or-nothing.
+    // With --template, render every candidate exactly once, up front, and keep
+    // the rendered bytes. A file with literal `{{ }}` (GitHub Actions, helm, go
+    // templates) must fail here, before anything is moved into the package,
+    // and the captured content must be written to the target after the move
+    // instead of re-rendering the moved template. This keeps multi-file adopt
+    // all-or-nothing and closes the check-then-move render window.
     if options.template {
-        for (file_path, _) in &adoptions {
-            template::render(file_path, options.data).map_err(|e| {
-                error::StauError::TemplateError(format!(
-                    "cannot render adopted template {}: {e}",
-                    file_path.display()
-                ))
-            })?;
+        for (file_path, _, rendered) in &mut adoptions {
+            *rendered = Some(template::render(file_path, options.data)?);
         }
     }
 
     ensure_package_dir(&package_dir, dry_run, verbose)?;
 
-    for (file_path, dest) in &adoptions {
+    for (file_path, dest, rendered) in &adoptions {
         if verbose || dry_run {
             println!("  {} -> {}", file_path.display(), dest.display());
         }
 
         if !dry_run {
-            move_file_into_package(file_path, dest, options.template, options.data)?;
+            move_file_into_package(file_path, dest, rendered.as_deref())?;
         }
     }
 
@@ -170,18 +168,11 @@ fn adopt_destination(
     Ok(Some((file_path, dest)))
 }
 
-fn move_file_into_package(
-    file_path: &Path,
-    dest: &Path,
-    template: bool,
-    data: &serde_json::Value,
-) -> Result<()> {
+fn move_file_into_package(file_path: &Path, dest: &Path, rendered: Option<&str>) -> Result<()> {
     symlink::move_file(file_path, dest)?;
-    if template {
-        let content = template::render(dest, data)?;
-        symlink::write_rendered(dest, file_path, &content, false)?;
-    } else {
-        symlink::create_symlink(dest, file_path, false)?;
+    match rendered {
+        Some(content) => symlink::write_rendered(dest, file_path, content, false)?,
+        None => symlink::create_symlink(dest, file_path, false)?,
     }
     Ok(())
 }
