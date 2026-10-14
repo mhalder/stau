@@ -1,21 +1,50 @@
 use crate::error::{Result, StauError, map_io_error};
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 
-/// Represents a symlink mapping from source to target
+/// How a source file is materialized at its target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MappingKind {
+    /// A GNU Stow-style symlink from target to source (the default).
+    Symlink,
+    /// A `*.tmpl` source rendered into a regular file at the target.
+    Render,
+}
+
+/// Represents a mapping from a package source to a target location.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymlinkMapping {
     /// The source file in the package directory
     pub source: PathBuf,
-    /// The target location where the symlink should be created
+    /// The target location where the symlink should be created (or file written)
     pub target: PathBuf,
+    /// How the source is materialized at the target.
+    pub kind: MappingKind,
+    /// The rendered contents, `Some(..)` iff `kind == Render`.
+    pub rendered: Option<String>,
 }
 
 impl SymlinkMapping {
     /// Creates a new symlink mapping from source to target.
     pub fn new(source: PathBuf, target: PathBuf) -> Self {
-        Self { source, target }
+        Self {
+            source,
+            target,
+            kind: MappingKind::Symlink,
+            rendered: None,
+        }
+    }
+
+    /// Creates a render mapping from source to target with rendered content.
+    pub fn render(source: PathBuf, target: PathBuf, content: String) -> Self {
+        Self {
+            source,
+            target,
+            kind: MappingKind::Render,
+            rendered: Some(content),
+        }
     }
 }
 
@@ -93,13 +122,25 @@ fn normalize_lexically(path: &Path) -> PathBuf {
     normalized
 }
 
-/// Checks every target for conflicts before any symlink is created.
+/// Checks every target for conflicts before any mapping is applied.
 ///
 /// This is the conflict pre-check used by `install` so a conflicting file does
 /// not leave the package partially installed. It reports the first conflict.
+/// For `Render` mappings this is a dry-run of [`write_rendered`].
 pub fn check_conflicts(mappings: &[SymlinkMapping]) -> Result<()> {
     for mapping in mappings {
-        create_symlink(&mapping.source, &mapping.target, true)?;
+        match mapping.kind {
+            MappingKind::Symlink => create_symlink(&mapping.source, &mapping.target, true)?,
+            MappingKind::Render => write_rendered(
+                &mapping.source,
+                &mapping.target,
+                mapping
+                    .rendered
+                    .as_deref()
+                    .expect("render mapping carries content"),
+                true,
+            )?,
+        }
     }
     Ok(())
 }
@@ -166,6 +207,147 @@ pub fn same_contents(a: &Path, b: &Path) -> Result<bool> {
     let contents_b =
         fs::read(b).map_err(|e| map_io_error(e, format!("Cannot read file: {}", b.display())))?;
     Ok(contents_a == contents_b)
+}
+
+/// Compares a file's bytes to a string.
+///
+/// Used to recognize a render target whose contents match the current render
+/// (the `installed` state for a `Render` mapping).
+pub fn same_bytes(path: &Path, content: &str) -> Result<bool> {
+    let existing = fs::read(path)
+        .map_err(|e| map_io_error(e, format!("Cannot read file: {}", path.display())))?;
+    Ok(existing == content.as_bytes())
+}
+
+/// Returns `Ok(true)` when `target` is a regular file whose bytes equal `content`.
+pub fn rendered_is_current(target: &Path, content: &str) -> Result<bool> {
+    match target.symlink_metadata() {
+        Ok(metadata) if metadata.is_file() => same_bytes(target, content),
+        Ok(_) => Ok(false),
+        Err(_) => Ok(false),
+    }
+}
+
+/// Returns `Ok(true)` when `target` is a regular file whose bytes differ from
+/// `content`, i.e. local modifications that uninstall would discard.
+pub fn rendered_differs(target: &Path, content: &str) -> Result<bool> {
+    match target.symlink_metadata() {
+        Ok(metadata) if metadata.is_file() => Ok(!same_bytes(target, content)?),
+        Ok(_) => Ok(false),
+        Err(_) => Ok(false),
+    }
+}
+
+/// Writes a rendered file at `target`, preserving the source's permission bits.
+///
+/// If the target already exists as a regular file with bytes equal to `content`,
+/// this is a no-op. If it exists as anything else (symlink, directory, special
+/// file) or as a regular file with different bytes, this returns
+/// [`StauError::ConflictingFile`]. Otherwise the bytes are written atomically
+/// (a temporary file in the same directory, then `fs::rename`) and the target's
+/// permission bits are copied from `source` so the executable bit is preserved.
+pub fn write_rendered(source: &Path, target: &Path, content: &str, dry_run: bool) -> Result<()> {
+    if rendered_is_current(target, content)? {
+        return Ok(());
+    }
+
+    if target.symlink_metadata().is_ok() {
+        return Err(StauError::ConflictingFile(target.to_path_buf()));
+    }
+
+    if dry_run {
+        return Ok(());
+    }
+
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            map_io_error(e, format!("Cannot create directory: {}", parent.display()))
+        })?;
+    }
+
+    write_atomic(target, content.as_bytes())?;
+
+    let permissions = fs::metadata(source)
+        .map_err(|e| map_io_error(e, format!("Cannot read metadata: {}", source.display())))?
+        .permissions();
+    fs::set_permissions(target, permissions)
+        .map_err(|e| map_io_error(e, format!("Cannot set permissions: {}", target.display())))?;
+
+    Ok(())
+}
+
+/// Removes a rendered file, and only a rendered file.
+///
+/// Returns `Ok(true)` if a regular file was removed, `Ok(false)` if the target
+/// is absent, a symlink, or a directory (never delete something stau did not
+/// create).
+pub fn remove_rendered(target: &Path, dry_run: bool) -> Result<bool> {
+    match target.symlink_metadata() {
+        Ok(metadata) if metadata.is_file() => {
+            if dry_run {
+                return Ok(true);
+            }
+            fs::remove_file(target).map_err(|e| {
+                map_io_error(e, format!("Cannot remove file: {}", target.display()))
+            })?;
+            Ok(true)
+        }
+        Ok(_) => Ok(false),
+        Err(_) => Ok(false),
+    }
+}
+
+/// Writes `bytes` to `path` atomically: a unique temporary file in the same
+/// directory, then `fs::rename` over the destination.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| StauError::InvalidPath(path.to_path_buf()))?;
+
+    let mut tmp_path;
+    let mut counter = 0u64;
+    loop {
+        tmp_path = dir.join(format!(
+            ".{}.{}.{}.tmp",
+            file_name.to_string_lossy(),
+            std::process::id(),
+            counter
+        ));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)
+        {
+            Ok(mut file) => {
+                let result = file
+                    .write_all(bytes)
+                    .and_then(|_| file.sync_all())
+                    .map_err(|e| {
+                        map_io_error(e, format!("Cannot write file: {}", tmp_path.display()))
+                    });
+                if result.is_err() {
+                    let _ = fs::remove_file(&tmp_path);
+                    return result;
+                }
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                counter += 1;
+            }
+            Err(e) => {
+                return Err(map_io_error(
+                    e,
+                    format!("Cannot create temporary file: {}", tmp_path.display()),
+                ));
+            }
+        }
+    }
+
+    fs::rename(&tmp_path, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp_path);
+        map_io_error(e, format!("Cannot write file: {}", path.display()))
+    })
 }
 
 /// Copies a file from source to destination, creating parent directories as needed.
@@ -504,5 +686,130 @@ mod tests {
 
         assert!(!source.exists());
         assert_eq!(fs::read_to_string(&dest).unwrap(), "content");
+    }
+
+    #[test]
+    fn test_write_rendered_creates_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("src.tmpl");
+        let target = temp_dir.path().join("nested/target");
+        fs::write(&source, "source").unwrap();
+
+        write_rendered(&source, &target, "rendered", false).unwrap();
+
+        assert!(target.is_file());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "rendered");
+        assert!(target.parent().unwrap().is_dir());
+    }
+
+    #[test]
+    fn test_write_rendered_equal_is_noop() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("src.tmpl");
+        let target = temp_dir.path().join("target");
+        fs::write(&source, "source").unwrap();
+        fs::write(&target, "same").unwrap();
+
+        write_rendered(&source, &target, "same", false).unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "same");
+    }
+
+    #[test]
+    fn test_write_rendered_conflict_on_different_bytes() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("src.tmpl");
+        let target = temp_dir.path().join("target");
+        fs::write(&source, "source").unwrap();
+        fs::write(&target, "existing").unwrap();
+
+        let result = write_rendered(&source, &target, "rendered", false);
+        assert!(matches!(result.unwrap_err(), StauError::ConflictingFile(_)));
+        // The existing file is untouched.
+        assert_eq!(fs::read_to_string(&target).unwrap(), "existing");
+    }
+
+    #[test]
+    fn test_write_rendered_directory_conflict() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("src.tmpl");
+        let target = temp_dir.path().join("target");
+        fs::write(&source, "source").unwrap();
+        fs::create_dir(&target).unwrap();
+
+        let result = write_rendered(&source, &target, "rendered", false);
+        assert!(matches!(result.unwrap_err(), StauError::ConflictingFile(_)));
+        assert!(target.is_dir());
+    }
+
+    #[test]
+    fn test_write_rendered_preserves_exec_bit() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("bin.tmpl");
+        let target = temp_dir.path().join("bin");
+        fs::write(&source, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+
+        write_rendered(&source, &target, "#!/bin/sh\n", false).unwrap();
+
+        let mode = fs::metadata(&target).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111, "executable bits preserved");
+    }
+
+    #[test]
+    fn test_write_rendered_dry_run_writes_nothing() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("src.tmpl");
+        let target = temp_dir.path().join("target");
+        fs::write(&source, "source").unwrap();
+
+        write_rendered(&source, &target, "rendered", true).unwrap();
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn test_remove_rendered_regular_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let target = temp_dir.path().join("target");
+        fs::write(&target, "content").unwrap();
+
+        assert!(remove_rendered(&target, false).unwrap());
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn test_remove_rendered_leaves_symlink() {
+        let temp_dir = TempDir::new().unwrap();
+        let target = temp_dir.path().join("target");
+        unix_fs::symlink("/some/where", &target).unwrap();
+
+        assert!(!remove_rendered(&target, false).unwrap());
+        assert!(target.symlink_metadata().unwrap().is_symlink());
+    }
+
+    #[test]
+    fn test_remove_rendered_missing_is_false() {
+        let temp_dir = TempDir::new().unwrap();
+        let target = temp_dir.path().join("missing");
+
+        assert!(!remove_rendered(&target, false).unwrap());
+    }
+
+    #[test]
+    fn test_check_conflicts_renders_dry_run() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("src.tmpl");
+        let target = temp_dir.path().join("target");
+        fs::write(&source, "source").unwrap();
+        fs::write(&target, "different").unwrap();
+
+        let mappings = vec![SymlinkMapping::render(
+            source.clone(),
+            target.clone(),
+            "rendered".to_string(),
+        )];
+        let result = check_conflicts(&mappings);
+        assert!(matches!(result.unwrap_err(), StauError::ConflictingFile(_)));
     }
 }

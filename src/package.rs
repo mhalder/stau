@@ -1,17 +1,21 @@
 use crate::error::{Result, StauError, map_io_error};
-use crate::symlink::{self, SymlinkMapping};
+use crate::symlink::{self, MappingKind, SymlinkMapping};
+use crate::template;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-/// Walks a package directory and generates symlink mappings for all files.
+/// Walks a package directory and generates mappings for all files.
 ///
 /// Returns a list of `SymlinkMapping` structs representing the source files in the package
-/// and their corresponding target locations. Setup/teardown scripts and version control
-/// files at the package root are excluded.
+/// and their corresponding target locations. Setup/teardown scripts, version control
+/// files at the package root, and the reserved `.stau` directory are excluded.
+/// A `*.tmpl` source is a [`MappingKind::Render`] mapping whose `rendered` contents are
+/// filled in by rendering the template with `data`; a render error fails discovery.
 pub fn discover_package_files(
     package_dir: &Path,
     target_dir: &Path,
+    data: &serde_json::Value,
 ) -> Result<Vec<SymlinkMapping>> {
     if !package_dir.exists() {
         return Err(StauError::PackageNotFound(
@@ -33,6 +37,27 @@ pub fn discover_package_files(
     )?;
     // read_dir order is filesystem-dependent; sort for deterministic output
     mappings.sort_by(|a, b| a.target.cmp(&b.target));
+
+    // Two sources must not resolve to the same target (e.g. `foo` and `foo.tmpl`).
+    for window in mappings.windows(2) {
+        if window[0].target == window[1].target {
+            return Err(StauError::InvalidArguments(format!(
+                "conflicting sources for target '{}': '{}' and '{}'",
+                window[0].target.display(),
+                window[0].source.display(),
+                window[1].source.display()
+            )));
+        }
+    }
+
+    for mapping in &mut mappings {
+        if mapping.kind == MappingKind::Render {
+            let content = template::render(&mapping.source, data)?;
+            *mapping =
+                SymlinkMapping::render(mapping.source.clone(), mapping.target.clone(), content);
+        }
+    }
+
     Ok(mappings)
 }
 
@@ -155,7 +180,8 @@ fn walk_directory(
         let path = entry.path();
         let file_name = entry.file_name();
 
-        // Skip package scripts and version control files in root of package
+        // Skip package scripts, version control files, and the reserved `.stau`
+        // directory in the root of the package.
         let file_name_str = file_name.to_string_lossy();
         if current_dir == base_dir
             && matches!(
@@ -166,6 +192,7 @@ fn walk_directory(
                     | ".gitignore"
                     | ".gitattributes"
                     | ".gitmodules"
+                    | ".stau"
             )
         {
             continue;
@@ -189,13 +216,45 @@ fn walk_directory(
             walk_directory(base_dir, &path, target_dir, mappings, dirs)?;
             dirs.push(rel_path);
         } else {
-            // Target path is target_dir + relative path
-            let target_path = target_dir.join(&rel_path);
-            mappings.push(SymlinkMapping::new(path, target_path));
+            // A `*.tmpl` source renders to a regular file at the stripped
+            // target; anything else stays a symlink.
+            let (target_rel, kind) = classify(&rel_path)?;
+            let target_path = target_dir.join(&target_rel);
+            match kind {
+                MappingKind::Symlink => mappings.push(SymlinkMapping::new(path, target_path)),
+                MappingKind::Render => mappings.push(SymlinkMapping {
+                    source: path,
+                    target: target_path,
+                    kind: MappingKind::Render,
+                    rendered: None,
+                }),
+            }
         }
     }
 
     Ok(())
+}
+
+/// Classifies a package file by its `.tmpl` suffix.
+///
+/// Stripping is exact and final: `foo.tmpl` becomes target `foo` (rendered),
+/// `foo.tmpl.bak` stays a symlink, and a file named exactly `.tmpl` has an
+/// empty target name and is rejected.
+fn classify(rel_path: &Path) -> Result<(PathBuf, MappingKind)> {
+    let name = rel_path
+        .file_name()
+        .ok_or_else(|| StauError::InvalidPath(rel_path.to_path_buf()))?;
+    let name = name.to_string_lossy();
+    if let Some(stripped) = name.strip_suffix(".tmpl") {
+        if stripped.is_empty() {
+            return Err(StauError::InvalidPath(rel_path.to_path_buf()));
+        }
+        let mut target_rel = rel_path.to_path_buf();
+        target_rel.set_file_name(stripped);
+        Ok((target_rel, MappingKind::Render))
+    } else {
+        Ok((rel_path.to_path_buf(), MappingKind::Symlink))
+    }
 }
 
 /// Lists all packages in the stau directory.
@@ -236,6 +295,11 @@ mod tests {
     use std::fs::File;
     use tempfile::TempDir;
 
+    /// Empty template data (no user variables), sufficient for plain-text templates.
+    fn data() -> serde_json::Value {
+        serde_json::json!({ "stau": {} })
+    }
+
     #[test]
     fn test_discover_simple_package() {
         let temp_dir = TempDir::new().unwrap();
@@ -247,7 +311,7 @@ mod tests {
         File::create(package_dir.join(".bashrc")).unwrap();
         File::create(package_dir.join(".vimrc")).unwrap();
 
-        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
+        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
 
         assert_eq!(mappings.len(), 2);
         assert!(
@@ -274,7 +338,7 @@ mod tests {
         File::create(package_dir.join(".config/nvim/init.lua")).unwrap();
         File::create(package_dir.join(".bashrc")).unwrap();
 
-        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
+        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
 
         assert_eq!(mappings.len(), 2);
         assert!(
@@ -296,7 +360,7 @@ mod tests {
         File::create(package_dir.join("teardown.sh")).unwrap();
         File::create(package_dir.join(".bashrc")).unwrap();
 
-        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
+        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
 
         // Should only find .bashrc, not the scripts
         assert_eq!(mappings.len(), 1);
@@ -314,7 +378,7 @@ mod tests {
         File::create(package_dir.join(".gitignore")).unwrap();
         File::create(package_dir.join(".bashrc")).unwrap();
 
-        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
+        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
 
         // Should skip .git and .gitignore at root, but include .bashrc (it's a config file)
         assert_eq!(mappings.len(), 1);
@@ -347,7 +411,7 @@ mod tests {
         let package_dir = temp_dir.path().join("nonexistent");
         let target_dir = temp_dir.path().join("target");
 
-        let result = discover_package_files(&package_dir, &target_dir);
+        let result = discover_package_files(&package_dir, &target_dir, &data());
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), StauError::PackageNotFound(_)));
     }
@@ -452,7 +516,7 @@ mod tests {
         File::create(package_dir.join(".local/bin/teardown.sh")).unwrap();
         File::create(package_dir.join("sub/.gitignore")).unwrap();
 
-        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
+        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
 
         assert_eq!(mappings.len(), 3);
         assert!(
@@ -470,5 +534,99 @@ mod tests {
                 .iter()
                 .any(|m| m.target == target_dir.join("sub/.gitignore"))
         );
+    }
+
+    #[test]
+    fn test_tmpl_target_naming_and_kind() {
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = temp_dir.path().join("pkg");
+        let target_dir = temp_dir.path().join("target");
+        fs::create_dir(&package_dir).unwrap();
+        fs::write(package_dir.join("foo.tmpl"), "hello").unwrap();
+
+        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
+
+        assert_eq!(mappings.len(), 1);
+        let mapping = &mappings[0];
+        assert_eq!(mapping.kind, MappingKind::Render);
+        assert!(mapping.source.ends_with("foo.tmpl"));
+        assert!(mapping.target.ends_with("foo"));
+        assert!(!mapping.target.ends_with("foo.tmpl"));
+        assert_eq!(mapping.rendered.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn test_tmpl_source_excluded_from_targets() {
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = temp_dir.path().join("pkg");
+        let target_dir = temp_dir.path().join("target");
+        fs::create_dir(&package_dir).unwrap();
+        fs::write(package_dir.join("foo.tmpl"), "hello").unwrap();
+
+        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
+
+        assert_eq!(mappings.len(), 1);
+        assert!(
+            !mappings
+                .iter()
+                .any(|m| m.target == target_dir.join("foo.tmpl"))
+        );
+    }
+
+    #[test]
+    fn test_tmpl_duplicate_target_detected() {
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = temp_dir.path().join("pkg");
+        let target_dir = temp_dir.path().join("target");
+        fs::create_dir(&package_dir).unwrap();
+        fs::write(package_dir.join("foo"), "plain").unwrap();
+        fs::write(package_dir.join("foo.tmpl"), "tmpl").unwrap();
+
+        let err = discover_package_files(&package_dir, &target_dir, &data()).unwrap_err();
+        assert!(matches!(err, StauError::InvalidArguments(_)), "got {err:?}");
+        assert!(err.to_string().contains("foo"), "message: {err}");
+    }
+
+    #[test]
+    fn test_tmpl_bak_stays_symlink() {
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = temp_dir.path().join("pkg");
+        let target_dir = temp_dir.path().join("target");
+        fs::create_dir(&package_dir).unwrap();
+        fs::write(package_dir.join("foo.tmpl.bak"), "x").unwrap();
+
+        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
+
+        assert_eq!(mappings.len(), 1);
+        assert_eq!(mappings[0].kind, MappingKind::Symlink);
+        assert!(mappings[0].target.ends_with("foo.tmpl.bak"));
+        assert!(mappings[0].rendered.is_none());
+    }
+
+    #[test]
+    fn test_tmpl_exact_name_rejected() {
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = temp_dir.path().join("pkg");
+        let target_dir = temp_dir.path().join("target");
+        fs::create_dir(&package_dir).unwrap();
+        fs::write(package_dir.join(".tmpl"), "x").unwrap();
+
+        let err = discover_package_files(&package_dir, &target_dir, &data()).unwrap_err();
+        assert!(matches!(err, StauError::InvalidPath(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn test_stau_dir_skipped_at_root() {
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = temp_dir.path().join("pkg");
+        let target_dir = temp_dir.path().join("target");
+        fs::create_dir_all(package_dir.join(".stau")).unwrap();
+        fs::write(package_dir.join(".stau/data.toml"), "x = 1").unwrap();
+        fs::write(package_dir.join(".bashrc"), "x").unwrap();
+
+        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
+
+        assert_eq!(mappings.len(), 1);
+        assert!(mappings[0].target.ends_with(".bashrc"));
     }
 }
