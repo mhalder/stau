@@ -49,6 +49,23 @@ pub fn discover_package_files(
         }
     }
 
+    // A file target must not be a proper ancestor of another target (e.g.
+    // `foo` and `foo/bar`), which install cannot materialize; compare path
+    // components, not string prefixes, so `foo` and `foobar` stay fine.
+    for (i, ancestor) in mappings.iter().enumerate() {
+        for descendant in &mappings[i + 1..] {
+            if descendant.target.starts_with(&ancestor.target) {
+                return Err(StauError::InvalidArguments(format!(
+                    "conflicting targets: '{}' (from '{}') is an ancestor of '{}' (from '{}')",
+                    ancestor.target.display(),
+                    ancestor.source.display(),
+                    descendant.target.display(),
+                    descendant.source.display()
+                )));
+            }
+        }
+    }
+
     Ok(mappings)
 }
 
@@ -590,6 +607,35 @@ mod tests {
         let err = discover_package_files(&package_dir, &target_dir).unwrap_err();
         assert!(matches!(err, StauError::InvalidArguments(_)), "got {err:?}");
         assert!(err.to_string().contains("foo"), "message: {err}");
+    }
+
+    #[test]
+    fn test_tmpl_file_dir_collision_rejected() {
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = temp_dir.path().join("pkg");
+        let target_dir = temp_dir.path().join("target");
+        fs::create_dir_all(package_dir.join("foo")).unwrap();
+        fs::write(package_dir.join("foo.tmpl"), "x").unwrap();
+        fs::write(package_dir.join("foo/bar"), "y").unwrap();
+
+        let err = discover_package_files(&package_dir, &target_dir).unwrap_err();
+        assert!(matches!(err, StauError::InvalidArguments(_)), "got {err:?}");
+        let message = err.to_string();
+        assert!(message.contains("foo.tmpl"), "message: {message}");
+        assert!(message.contains("foo/bar"), "message: {message}");
+    }
+
+    #[test]
+    fn test_sibling_targets_not_rejected() {
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = temp_dir.path().join("pkg");
+        let target_dir = temp_dir.path().join("target");
+        fs::create_dir_all(package_dir.join(".config")).unwrap();
+        fs::write(package_dir.join(".config/a"), "a").unwrap();
+        fs::write(package_dir.join(".config/b"), "b").unwrap();
+
+        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
+        assert_eq!(mappings.len(), 2);
     }
 
     #[test]
