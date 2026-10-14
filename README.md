@@ -121,6 +121,7 @@ stau install fish --set DOTFILES_GUI=1 --non-interactive
 | `-a, --all` | Install all packages in STAU_DIR (alphabetical order) |
 | `-p, --profile <NAME>` | Install the packages listed in `STAU_DIR/profiles/<NAME>` |
 | `--no-setup` | Skip running the setup script |
+| `--refresh-rendered` | Re-render rendered targets whose bytes have drifted from the current render |
 | `--json` | Print a machine-readable JSON summary on stdout |
 | `--set KEY=VALUE` | Set a template variable or hook-script environment variable (repeatable; nested keys are template-only) |
 | `--non-interactive` | Connect hook script stdin to `/dev/null` |
@@ -500,7 +501,7 @@ stau adopt git ~/.gitconfig --template   # adopt as a template and render it bac
 
 ### v1 tradeoffs
 
-A rendered target is a plain regular file, so it is not live: editing the target does not change the template, and a later `status` reports the file as `drift`. Re-render with `restow` (or `install` again, which leaves an up-to-date file alone). `uninstall` removes the rendered file and never copies the template back; if the target's bytes differ from the current render, a warning reports that local modifications were discarded. Put machine-specific values in `machine.toml` so `status`, `verify`, and `list` can re-render them; `--set` values are ephemeral and must be re-supplied to those commands. Comparison is byte-based (`status`/`verify`), and `install` restores the source file's mode even when the bytes already match.
+A rendered target is a plain regular file, so it is not live: editing the target does not change the template, and a later `status` reports the file as `drift`. Re-render with `restow` (which also runs the teardown and setup hooks) or refresh it in place with `stau install --refresh-rendered`. A plain `install` does not re-render drift: it fails with exit code 2 when the target's bytes differ from the current render, and only leaves an up-to-date file alone. `uninstall` removes the rendered file and never copies the template back; if the target's bytes differ from the current render, a warning reports that local modifications were discarded. Put machine-specific values in `machine.toml` so `status`, `verify`, and `list` can re-render them; `--set` values are ephemeral and must be re-supplied to those commands. Comparison is byte-based (`status`/`verify`), and `install` restores the source file's mode even when the bytes already match.
 
 ## Profiles
 
@@ -529,7 +530,7 @@ Three commands produce stable machine-readable output:
 
 - `stau status --json [<package>...]` prints one JSON object with `stau_dir`, `target`, and a `packages` array of per-package state, counts, and files. Counts include `drift` (rendered files whose bytes differ from their template) and `error` (templates that no longer render).
 - `stau verify [--json] <package>...` prints per-file mismatches; with `--json` it prints `{"ok": bool, "packages": [...]}` and exits 5 on any mismatch.
-- `stau install|uninstall|restow --json` print a summary object on stdout, also when some packages failed (the command still exits 1). Each package entry carries `name` and `ok`; on failure it also carries `error`, `exit_code` and `error_kind`, and a teardown script that failed while the uninstall carried on is marked `teardown_failed: true`.
+- `stau install|uninstall|restow --json` print a summary object on stdout, also when some packages failed (the command still exits 1). Each package entry carries `name` and `ok`; an `install` entry also carries `rendered_refreshed` (the number of drifted rendered targets refreshed, `0` when none); on failure it also carries `error`, `exit_code` and `error_kind`, and a teardown script that failed while the uninstall carried on is marked `teardown_failed: true`.
 
 In `--json` mode stau suppresses its own human output and redirects hook stdout to stderr, so stdout carries exactly one JSON object; hook output still appears on stderr.
 

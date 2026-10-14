@@ -20,9 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **list:** report the new package state token (`ok`, `partial`, `missing`, `conflict`, `hook`) with a notes column, and add `--long` (`-l`) to show link counts and hooks for every package
 * **cli:** add `stau completion <shell>`, printing a static completion script for bash, elvish, fish, powershell, or zsh; it runs without a `STAU_DIR`
 * **cli:** hint `--target` as a directory and `adopt` file arguments as paths, so shells complete paths for them
+* **install:** add `--refresh-rendered` to re-render a drifted rendered (`*.tmpl`) target in place instead of failing with a conflict; `--json` reports the count per package as `rendered_refreshed`
 
 ### Bug Fixes
 
+* **install:** fail on a drifted rendered target with a hint naming `stau restow` and `stau install --refresh-rendered` instead of a generic conflicting-file hint
 * **cli:** restore the default `SIGPIPE` disposition, so piping long output into a command that exits early (`stau status pkg | head`) terminates the way any Unix command does instead of panicking with exit code 101
 
 ## [3.1.1](https://github.com/mhalder/stau/compare/v3.1.0...v3.1.1) (2026-03-16)
