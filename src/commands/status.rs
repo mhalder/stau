@@ -2,6 +2,7 @@ use crate::config::Config;
 use crate::error::{self, Result};
 use crate::package;
 use crate::symlink::{self, MappingKind};
+use crate::template;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ pub enum FileState {
     Broken,
     Restored,
     Drift,
+    Error,
 }
 
 impl FileState {
@@ -26,6 +28,7 @@ impl FileState {
             FileState::Broken => "broken",
             FileState::Restored => "restored",
             FileState::Drift => "drift",
+            FileState::Error => "error",
         }
     }
 }
@@ -59,6 +62,10 @@ fn compute_file_state_inner(
     broken: &HashSet<PathBuf>,
     lenient: bool,
 ) -> Result<FileState> {
+    if mapping.render_error.is_some() {
+        return Ok(FileState::Error);
+    }
+
     match mapping.kind {
         MappingKind::Symlink => {
             if broken.contains(&mapping.target) {
@@ -119,6 +126,7 @@ struct StatusCounts {
     conflict: usize,
     broken: usize,
     drift: usize,
+    error: usize,
 }
 
 #[derive(Serialize)]
@@ -190,7 +198,8 @@ pub fn show_status(
     }
 
     // Get all mappings
-    let mappings = package::discover_package_files(&package_dir, &target_dir, data)?;
+    let mut mappings = package::discover_package_files(&package_dir, &target_dir)?;
+    template::render_mappings(&mut mappings, data);
     let broken = package::discover_broken_symlinks(&package_dir, &target_dir)?;
     let broken_set: HashSet<PathBuf> = broken.iter().cloned().collect();
 
@@ -210,6 +219,7 @@ pub fn show_status(
     let mut installed = 0;
     let mut not_installed = 0;
     let mut drift = 0;
+    let mut error = 0;
 
     for mapping in &mappings {
         let state = compute_file_state_lenient(mapping, &broken_set);
@@ -225,6 +235,10 @@ pub fn show_status(
             FileState::Drift => {
                 drift += 1;
                 ("[drift]", false)
+            }
+            FileState::Error => {
+                error += 1;
+                ("[error]", false)
             }
         };
         if count_not_installed {
@@ -248,6 +262,9 @@ pub fn show_status(
     );
     if drift > 0 {
         summary.push_str(&format!(", {} drift", drift));
+    }
+    if error > 0 {
+        summary.push_str(&format!(", {} error", error));
     }
     summary.push_str(&format!(", {} broken", broken.len()));
     println!();
@@ -305,7 +322,8 @@ fn collect_package_status(
         return Err(error::StauError::PackageNotFound(package.to_string()));
     }
 
-    let mappings = package::discover_package_files(&package_dir, target_dir, data)?;
+    let mut mappings = package::discover_package_files(&package_dir, target_dir)?;
+    template::render_mappings(&mut mappings, data);
     let broken = package::discover_broken_symlinks(&package_dir, target_dir)?;
     let broken_set: HashSet<PathBuf> = broken.iter().cloned().collect();
 
@@ -316,6 +334,7 @@ fn collect_package_status(
         conflict: 0,
         broken: 0,
         drift: 0,
+        error: 0,
     };
 
     for mapping in &mappings {
@@ -326,6 +345,7 @@ fn collect_package_status(
             FileState::Conflict => counts.conflict += 1,
             FileState::Broken => counts.broken += 1,
             FileState::Drift => counts.drift += 1,
+            FileState::Error => counts.error += 1,
         }
         files.push(StatusFile {
             rel: rel_to_target(&mapping.target, target_dir),
@@ -448,5 +468,24 @@ mod tests {
             compute_file_state(&mapping, &HashSet::new()).unwrap(),
             FileState::Conflict
         );
+    }
+
+    #[test]
+    fn test_render_error_is_reported() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("file");
+
+        let mapping = symlink::SymlinkMapping {
+            source: tmp.path().join("src.tmpl"),
+            target,
+            kind: MappingKind::Render,
+            rendered: None,
+            render_error: Some("boom".to_string()),
+        };
+        assert_eq!(
+            compute_file_state(&mapping, &HashSet::new()).unwrap(),
+            FileState::Error
+        );
+        assert_eq!(FileState::Error.as_str(), "error");
     }
 }

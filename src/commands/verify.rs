@@ -3,6 +3,7 @@ use crate::cli::Expect;
 use crate::config::Config;
 use crate::error::{self, Result, StauError};
 use crate::package;
+use crate::template;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -61,7 +62,8 @@ pub fn run_verify(
         }
 
         let package_dir = config.get_package_dir(package);
-        let mappings = package::discover_package_files(&package_dir, &target_dir, data)?;
+        let mut mappings = package::discover_package_files(&package_dir, &target_dir)?;
+        template::render_mappings(&mut mappings, data);
         let broken = package::discover_broken_symlinks(&package_dir, &target_dir)?;
         let broken_set: HashSet<PathBuf> = broken.iter().cloned().collect();
 

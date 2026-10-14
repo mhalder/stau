@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::error::Result;
 use crate::package;
+use crate::template;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -97,7 +98,13 @@ impl PackageStatus {
         data: &serde_json::Value,
     ) -> Result<Self> {
         let package_dir = config.get_package_dir(pkg);
-        let mappings = package::discover_package_files(&package_dir, target_dir, data)?;
+        let mut mappings = package::discover_package_files(&package_dir, target_dir)?;
+        template::render_mappings(&mut mappings, data);
+        // Surface a render failure as the package's error row, the same way a
+        // discovery error is surfaced today.
+        if let Some(e) = template::collect_render_errors(&mappings) {
+            return Err(e);
+        }
         let broken = package::discover_broken_symlinks(&package_dir, target_dir)?;
         let broken_set: HashSet<PathBuf> = broken.iter().cloned().collect();
 
@@ -111,7 +118,7 @@ impl PackageStatus {
                 FileState::Conflict => conflict += 1,
                 FileState::Broken => broken_in_mappings += 1,
                 FileState::Drift => drift += 1,
-                FileState::NotInstalled | FileState::Restored => {}
+                FileState::NotInstalled | FileState::Restored | FileState::Error => {}
             }
         }
 
