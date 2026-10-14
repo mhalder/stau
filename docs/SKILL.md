@@ -14,8 +14,8 @@ stau links the files of a package directory in a dotfiles repository (`STAU_DIR`
 
 ## Inspect before changing anything
 
-- `stau list` shows every package as `ok`, `partial`, `missing`, `conflict`, or `hook`, with notes for link counts, hooks, and broken links. `--long` (`-l`) adds link counts and hooks to every row.
-- `stau status <package>` shows each file as `[installed]`, `[not installed]`, `[conflict]`, `[restored]`, or `[BROKEN]`, and whether setup and teardown scripts exist.
+- `stau list` shows every package as `ok`, `partial`, `missing`, `conflict`, `hook`, or `error`, with notes for link counts, hooks, and broken links. `--long` (`-l`) adds link counts and hooks to every row.
+- `stau status <package>` shows each file as `[installed]`, `[not installed]`, `[conflict]`, `[restored]`, `[BROKEN]`, `[drift]`, or `[error]`, and whether setup and teardown scripts exist. `[drift]` is a rendered file whose bytes differ from its template; `[error]` is a template that no longer renders.
 - `stau status --json [<package>...]` prints the same state as a machine-readable envelope (one JSON object on stdout). The package `state` is `installed`, `partial`, `not_installed`, `conflict`, or `hook_only` — a package with no files to link, only hooks.
 - `stau verify [--expect installed|uninstalled] <package>...` checks that every file is in the expected state and exits 0 on success, 5 on mismatch.
 - Add `--dry-run` (`-n`) to any changing command first. It prints the symlinks, files, and scripts involved without touching the filesystem.
@@ -31,11 +31,15 @@ stau links the files of a package directory in a dotfiles repository (`STAU_DIR`
 | Remove the links and copy the files back | `stau uninstall <package>` |
 | Relink after adding or moving files in a package (runs teardown, then setup) | `stau restow <package>` |
 | Move existing files into a package and link them | `stau adopt <package> <file>...` |
+| Adopt files as `.tmpl` templates and render them back | `stau adopt --template <package> <file>...` |
+| Print the resolved template data | `stau data [--json]` |
+| Upsert a dotted key into the machine-local data file | `stau data set <key> <value>` |
+| Render one template to stdout | `stau render <file>` |
 | Remove broken links left by files deleted from a package | `stau clean <package>` |
 | Check that every file of a package is in a given state | `stau verify --expect installed <package>` |
 | Print a shell completion script | `stau completion <bash\|zsh\|fish\|elvish\|powershell>` |
 
-Flags: `--no-setup` and `--no-teardown` skip scripts, `-t, --target <dir>` overrides the target directory, and `-v, --verbose` explains each step. `install`, `uninstall`, and `restow` accept a package list, `--all`, or `--profile <name>`, and `--json` for a machine-readable summary. `--set KEY=VALUE` (repeatable) adds environment variables to hook scripts, `--non-interactive` connects their stdin to `/dev/null`, and `--script-timeout <dur>` (e.g. `30s`, `5m`) kills one that runs too long. `uninstall` also accepts `--all`, and `clean --deep` also finds links below directories removed from the package. `completion` needs no `STAU_DIR` and writes the script to stdout.
+Flags: `--no-setup` and `--no-teardown` skip scripts, `-t, --target <dir>` overrides the target directory, and `-v, --verbose` explains each step. `install`, `uninstall`, and `restow` accept a package list, `--all`, or `--profile <name>`, and `--json` for a machine-readable summary. `--set KEY=VALUE` (repeatable) supplies template data (dotted keys nest) and adds environment variables to hook scripts; it is accepted by `install`, `uninstall`, `restow`, `status`, `verify`, `adopt`, `data`, and `render`. `--non-interactive` connects hook stdin to `/dev/null`, and `--script-timeout <dur>` (e.g. `30s`, `5m`) kills one that runs too long. `uninstall` also accepts `--all`, and `clean --deep` also finds links below directories removed from the package. `completion` needs no `STAU_DIR` and writes the script to stdout.
 
 ## Rules
 
@@ -43,10 +47,10 @@ Flags: `--no-setup` and `--no-teardown` skip scripts, `-t, --target <dir>` overr
 - An explicit package list is processed in the order given; `--all` is alphabetical (it has no dependency information); a profile preserves the order of its lines. Use a list or profile when hook order matters.
 - Profiles live at `<STAU_DIR>/profiles/<name>`. Blank lines and `#` comments are ignored; every other line names one package; a missing profile is a not-found error (exit 1). The `profiles` directory itself is never treated as a package. Duplicate package names in a list or profile are installed once, keeping the first occurrence.
 - At the package root, `setup.sh`, `teardown.sh`, `.git`, `.gitignore`, `.gitattributes`, and `.gitmodules` are never linked. Files with these names in subdirectories are linked normally.
-- A source file whose name ends in `.tmpl` is rendered into a regular file at its target (the `.tmpl` suffix stripped), using `stau.*` facts plus the repo and machine data files and `--set`; every other file stays a symlink. See the README's Templating section.
+- A source file whose name ends in `.tmpl` is rendered into a regular file at its target (the `.tmpl` suffix stripped), using `stau.*` facts plus `<STAU_DIR>/.stau/data.toml`, `~/.config/stau/machine.toml`, and `--set`; every other file stays a symlink, and `.stau/` is reserved. A rendered target is not live: re-render with `restow`. Persistent per-machine values belong in `machine.toml`; `--set` applies only to the invocation that carries it (`list` does not accept it), so `status`/`verify` need the same `--set` when a template depends on it. See the README's Templating section.
 - `install` checks every target before creating any link. A conflicting file aborts it with exit code 2; remove the file or bring it under management with `stau adopt`. Never delete a user's file to resolve a conflict without asking.
-- `adopt` takes regular files inside the target directory, as absolute or relative paths. Directories and symlinks are skipped with a warning, so adopt the files inside a directory individually. It creates the package directory if it is missing, and checks every file for conflicts before moving any.
-- `uninstall` and `restow` remove only symlinks that point into the package; anything else at those paths is left alone.
+- `adopt` takes regular files inside the target directory, as absolute or relative paths. Directories and symlinks are skipped with a warning, so adopt the files inside a directory individually. It creates the package directory if it is missing, and checks every file for conflicts before moving any. With `--template` it stores `<rel>.tmpl` and renders it back to the target; it renders **before** moving anything, so a file containing literal `{{ }}` (GitHub Actions, helm) fails with exit 6 and is left untouched.
+- `uninstall` and `restow` remove symlinks that point into the package and rendered regular-file targets; anything else at those paths is left alone. A rendered file is removed without copying the template back, with a warning when its bytes had drifted.
 - `uninstall` leaves standalone copies of the files in the target directory. Use `restow` to relink a package without copying files back.
 - If `uninstall` cannot remove a link or copy a file back, it continues with the remaining files, reports every failure, and exits with the code of the last one. A failed copy-back restores the symlink so the file is not lost.
 - Scripts must be executable. They run in the target directory with `STAU_DIR`, `STAU_PACKAGE`, and `STAU_TARGET` set, plus any `--set KEY=VALUE` variables (`STAU_DIR`, `STAU_TARGET`, and `STAU_PACKAGE` cannot be overridden), and inherit the terminal, so they may prompt for input. `--non-interactive` connects their stdin to `/dev/null` instead. `--script-timeout <dur>` runs the script in its own process group and kills the whole group — descendants included — when it exceeds the duration (a timeout is a script failure, exit 4). A failing setup script fails `install` and `restow`; a failing teardown script only warns, in both `uninstall` and `restow`.
@@ -64,3 +68,4 @@ Flags: `--no-setup` and `--no-teardown` skip scripts, `-t, --target <dir>` overr
 | 3 | Permission denied or I/O error |
 | 4 | Setup script failed (including a script timeout) |
 | 5 | `verify` found a file not in the expected state |
+| 6 | Template render error or invalid template data |
