@@ -259,9 +259,9 @@ fn is_regular_file(target: &Path) -> bool {
 ///
 /// If the target already exists as a regular file with bytes equal to `content`,
 /// only its permission bits are converged to the source's (so a `chmod -x` is
-/// repaired). If it exists as anything else (symlink, directory, special file)
-/// or as a regular file with different bytes, this returns
-/// [`StauError::ConflictingFile`]. Otherwise the bytes are written atomically
+/// repaired). A regular file with different bytes returns
+/// [`StauError::RenderedDrift`]; anything else (symlink, directory, special
+/// file) returns [`StauError::ConflictingFile`]. Otherwise the bytes are written atomically
 /// (a temporary file in the same directory, then `fs::rename`) and the target's
 /// permission bits are copied from `source` so the executable bit is preserved.
 pub fn write_rendered(source: &Path, target: &Path, content: &str, dry_run: bool) -> Result<()> {
@@ -296,9 +296,10 @@ pub fn write_rendered(source: &Path, target: &Path, content: &str, dry_run: bool
 /// Refreshes a drifted rendered file at `target` in place.
 ///
 /// A regular-file target is overwritten atomically and its permission bits are
-/// copied from `source` (a no-op when `dry_run`). Any other kind of target
-/// (symlink, directory, special file) is a [`StauError::ConflictingFile`]; an
-/// absent target is created exactly as [`write_rendered`] does.
+/// copied from `source` (a no-op when `dry_run`). Any other target — absent,
+/// symlink, directory, or special file — is delegated to [`write_rendered`],
+/// which creates an absent target and refuses a non-regular one with
+/// [`StauError::ConflictingFile`].
 pub fn refresh_rendered(source: &Path, target: &Path, content: &str, dry_run: bool) -> Result<()> {
     match target.symlink_metadata() {
         Ok(metadata) if metadata.is_file() => {
@@ -306,24 +307,10 @@ pub fn refresh_rendered(source: &Path, target: &Path, content: &str, dry_run: bo
                 return Ok(());
             }
             write_atomic(target, content.as_bytes())?;
-            return set_permissions_from_source(source, target);
+            set_permissions_from_source(source, target)
         }
-        Ok(_) => return Err(StauError::ConflictingFile(target.to_path_buf())),
-        Err(_) => {}
+        _ => write_rendered(source, target, content, dry_run),
     }
-
-    if dry_run {
-        return Ok(());
-    }
-
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|e| {
-            map_io_error(e, format!("Cannot create directory: {}", parent.display()))
-        })?;
-    }
-
-    write_atomic(target, content.as_bytes())?;
-    set_permissions_from_source(source, target)
 }
 
 /// Copies the permission bits of `source` onto `target`.

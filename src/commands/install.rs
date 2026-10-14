@@ -23,6 +23,7 @@ pub fn install_package(
 ) -> PackageOutcome {
     let target_dir = config.get_target(run.target.clone());
     let package_dir = config.get_package_dir(package);
+    let mut refreshed = 0usize;
 
     if run.verbose && !run.json {
         println!("Package directory: {}", package_dir.display());
@@ -31,27 +32,28 @@ pub fn install_package(
 
     // Check if package exists
     if !config.package_exists(package) {
-        return PackageOutcome::failed(StauError::PackageNotFound(package.to_string()));
+        return PackageOutcome::install_failed(
+            StauError::PackageNotFound(package.to_string()),
+            refreshed,
+        );
     }
 
     // Discover all files in the package
     let mut mappings = match package::discover_package_files(&package_dir, &target_dir) {
         Ok(mappings) => mappings,
-        Err(e) => return PackageOutcome::failed(e),
+        Err(e) => return PackageOutcome::install_failed(e, refreshed),
     };
 
     // Render every template up front; a broken template must fail the whole
     // package before any symlink or file is created (no partial install).
     template::render_mappings(&mut mappings, &run.data);
     if let Some(e) = template::collect_render_errors(&mappings) {
-        return PackageOutcome::failed(e);
+        return PackageOutcome::install_failed(e, refreshed);
     }
 
     if run.verbose && !run.json {
         println!("Found {} files to link", mappings.len());
     }
-
-    let mut refreshed = 0usize;
 
     if mappings.is_empty() {
         if !run.json {
@@ -61,7 +63,7 @@ pub fn install_package(
         // Check every target for conflicts before creating any link or file, so a
         // conflict does not leave the package partially installed
         if let Err(e) = symlink::check_conflicts(&mappings, refresh_rendered) {
-            return PackageOutcome::failed(e);
+            return PackageOutcome::install_failed(e, refreshed);
         }
 
         // Create symlinks / write rendered files for all mappings
@@ -78,7 +80,7 @@ pub fn install_package(
                     if let Err(e) =
                         symlink::create_symlink(&mapping.source, &mapping.target, run.dry_run)
                     {
-                        return PackageOutcome::failed(e);
+                        return PackageOutcome::install_failed(e, refreshed);
                     }
                 }
                 MappingKind::Render => {
@@ -119,7 +121,7 @@ pub fn install_package(
                         )
                     };
                     if let Err(e) = result {
-                        return PackageOutcome::failed(e);
+                        return PackageOutcome::install_failed(e, refreshed);
                     }
                     if refresh {
                         refreshed += 1;
@@ -173,7 +175,7 @@ pub fn install_package(
             run.verbose,
             &run.script,
         ) {
-            return PackageOutcome::failed(e);
+            return PackageOutcome::install_failed(e, refreshed);
         }
 
         if !run.dry_run && !run.json {

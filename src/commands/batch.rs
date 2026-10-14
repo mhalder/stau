@@ -52,6 +52,16 @@ impl PackageOutcome {
             rendered_refreshed: None,
         }
     }
+
+    /// A fatal failure of an `install`, carrying how many drifted rendered
+    /// targets were refreshed before the failure (0 for the early failures).
+    pub fn install_failed(error: StauError, rendered_refreshed: usize) -> Self {
+        Self {
+            error: Some(error),
+            teardown_failed: false,
+            rendered_refreshed: Some(rendered_refreshed),
+        }
+    }
 }
 
 /// The per-package outcome of a batch run, as serialized for `--json`.
