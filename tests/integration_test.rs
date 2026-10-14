@@ -3900,6 +3900,148 @@ fn test_install_refresh_rendered_broken_template_exits_6() {
 }
 
 #[test]
+fn test_install_refresh_rendered_human_summary_counts() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir_all(xdg.join("stau")).unwrap();
+    fs::write(xdg.join("stau/machine.toml"), "[user]\nname = \"Alice\"\n").unwrap();
+
+    let conf = stau_dir.join("demo/.config/app/conf.tmpl");
+    fs::create_dir_all(conf.parent().unwrap()).unwrap();
+    fs::write(&conf, "x = {{ user.name }}\n").unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    // A plain install reports no refreshed clause.
+    let output = run(&["install", "demo"]);
+    assert!(output.status.success(), "install failed: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("refreshed"), "stdout: {stdout}");
+
+    // Drift the one target; refreshing reports the count.
+    let target = target_dir.join(".config/app/conf");
+    fs::write(&target, "x = changed\n").unwrap();
+    let output = run(&["install", "demo", "--refresh-rendered"]);
+    assert!(output.status.success(), "refresh failed: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(", 1 refreshed"), "stdout: {stdout}");
+}
+
+#[test]
+fn test_install_refresh_rendered_json_counts_two_targets() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir_all(xdg.join("stau")).unwrap();
+    fs::write(xdg.join("stau/machine.toml"), "[user]\nname = \"Alice\"\n").unwrap();
+
+    let pkg = stau_dir.join("pkg");
+    fs::create_dir_all(&pkg).unwrap();
+    fs::write(pkg.join("a.tmpl"), "{{ user.name }}\n").unwrap();
+    fs::write(pkg.join("b.tmpl"), "{{ user.name }}\n").unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    assert!(run(&["install", "pkg"]).status.success());
+    fs::write(target_dir.join("a"), "changed\n").unwrap();
+    fs::write(target_dir.join("b"), "changed\n").unwrap();
+
+    let output = run(&["install", "pkg", "--refresh-rendered", "--json"]);
+    assert!(output.status.success(), "refresh --json failed: {output:?}");
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid JSON");
+    assert_eq!(value["packages"][0]["rendered_refreshed"], 2);
+}
+
+#[test]
+fn test_install_refresh_rendered_directory_conflict_exits_2() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir(&xdg).unwrap();
+
+    let pkg = stau_dir.join("pkg");
+    fs::create_dir_all(&pkg).unwrap();
+    fs::write(pkg.join("foo.tmpl"), "x\n").unwrap();
+
+    // A directory sits where the rendered target belongs.
+    fs::create_dir(target_dir.join("foo")).unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .args(["install", "pkg", "--refresh-rendered"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2), "output: {output:?}");
+}
+
+#[test]
+fn test_uninstall_and_restow_json_omit_rendered_refreshed() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+
+    create_test_package(&stau_dir, "vim", &[".vimrc"]);
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    assert!(run(&["install", "vim"]).status.success());
+
+    let output = run(&["restow", "vim", "--json"]);
+    assert!(output.status.success(), "restow --json failed: {output:?}");
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid JSON");
+    assert!(value["packages"][0].get("rendered_refreshed").is_none());
+
+    let output = run(&["uninstall", "vim", "--json"]);
+    assert!(
+        output.status.success(),
+        "uninstall --json failed: {output:?}"
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid JSON");
+    assert!(value["packages"][0].get("rendered_refreshed").is_none());
+}
+
+#[test]
 fn test_data_command_toml_and_json() {
     let temp_dir = TempDir::new().unwrap();
     let stau_dir = temp_dir.path().join("dotfiles");
