@@ -3941,6 +3941,20 @@ fn test_adopt_template_literal_syntax_fails_without_moving() {
         .unwrap();
 
     assert_eq!(output.status.code(), Some(6), "output: {output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to render template"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains(".workflow"),
+        "stderr must name the file: {stderr}"
+    );
+    assert!(stderr.contains("undefined"), "stderr: {stderr}");
+    assert!(
+        !stderr.contains("cannot render adopted template"),
+        "stderr must not double-name the path: {stderr}"
+    );
     assert!(workflow.is_file(), "original target must be untouched");
     assert_eq!(
         fs::read_to_string(&workflow).unwrap(),
@@ -3949,6 +3963,97 @@ fn test_adopt_template_literal_syntax_fails_without_moving() {
     assert!(
         !stau_dir.join("pkg").exists(),
         "nothing must be moved into the package"
+    );
+}
+
+#[test]
+fn test_adopt_template_multi_file_all_or_nothing() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir(&xdg).unwrap();
+
+    let good = target_dir.join(".good");
+    let bad = target_dir.join(".bad");
+    fs::write(&good, "hello {{ name }}\n").unwrap();
+    fs::write(&bad, "on: ${{ github.event }}\n").unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .args([
+            "adopt",
+            "pkg",
+            good.to_str().unwrap(),
+            bad.to_str().unwrap(),
+            "--template",
+            "--set",
+            "name=alice",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(6), "output: {output:?}");
+    assert!(!good.is_symlink(), "good file must not be moved");
+    assert_eq!(fs::read_to_string(&good).unwrap(), "hello {{ name }}\n");
+    assert!(bad.is_file(), "bad target must be untouched");
+    assert!(!stau_dir.join("pkg").exists(), "nothing must be moved");
+}
+
+#[test]
+fn test_adopt_template_renders_captured_content() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir(&xdg).unwrap();
+
+    let source = target_dir.join("greet.sh");
+    fs::write(&source, "#!/bin/sh\necho hi {{ name }}\n").unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .args([
+            "adopt",
+            "pkg",
+            source.to_str().unwrap(),
+            "--template",
+            "--set",
+            "name=alice",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "adopt --template: {output:?}");
+
+    // The original path is a rendered regular file, not a symlink.
+    let target = target_dir.join("greet.sh");
+    assert!(target.is_file(), "target must be a rendered regular file");
+    assert!(!target.is_symlink(), "target must not be a symlink");
+    assert_eq!(
+        fs::read_to_string(&target).unwrap(),
+        "#!/bin/sh\necho hi alice\n"
+    );
+    assert_ne!(
+        fs::metadata(&target).unwrap().permissions().mode() & 0o111,
+        0,
+        "rendered target must keep the executable bit"
+    );
+
+    // The package holds the raw template source, not the rendered bytes.
+    let packaged = stau_dir.join("pkg/greet.sh.tmpl");
+    assert_eq!(
+        fs::read_to_string(&packaged).unwrap(),
+        "#!/bin/sh\necho hi {{ name }}\n"
     );
 }
 
