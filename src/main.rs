@@ -10,6 +10,7 @@ mod package;
 mod profile;
 mod script;
 mod symlink;
+mod template;
 
 use cli::{Cli, Commands};
 use config::Config;

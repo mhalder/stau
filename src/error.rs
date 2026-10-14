@@ -58,6 +58,9 @@ pub enum StauError {
     VerifyMismatch(String),
 
     #[error("{0}")]
+    TemplateError(String),
+
+    #[error("{0}")]
     Other(String),
 
     #[error("Invalid arguments: {0}")]
@@ -81,6 +84,7 @@ impl StauError {
             StauError::Other(_) => 1,
             StauError::InvalidArguments(_) => 1,
             StauError::VerifyMismatch(_) => 5,
+            StauError::TemplateError(_) => 6,
         }
     }
 
@@ -100,6 +104,7 @@ impl StauError {
             StauError::Other(_) => "other",
             StauError::InvalidArguments(_) => "invalid_arguments",
             StauError::VerifyMismatch(_) => "verify_mismatch",
+            StauError::TemplateError(_) => "template",
         }
     }
 }

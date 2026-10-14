@@ -14,4 +14,6 @@ pub struct RunOptions {
     pub verbose: bool,
     /// Hook script execution options.
     pub script: ScriptOptions,
+    /// The fully merged template data for this run.
+    pub data: serde_json::Value,
 }
