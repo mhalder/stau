@@ -14,6 +14,7 @@ Traditional tools like GNU Stow excel at symlink management but lack automation 
 - **Setup/Teardown Scripts**: Run package-specific scripts for automated configuration during install/uninstall
 - **Easy Adoption**: Migrate existing dotfiles into stau management with a single command
 - **Conflict Detection**: Safely detects and reports conflicts before overwriting files
+- **Template Rendering**: `*.tmpl` sources render to regular files with per-machine data (`stau.*` facts, repo/machine data files, `--set`)
 - **Dry Run Mode**: Preview changes before making them with `--dry-run`
 - **Broken Symlink Cleanup**: Clean up stale symlinks with the `clean` command
 - **Command Aliases**: Short aliases for common commands (`i`, `u`, `s`, `l`, etc.)
@@ -121,7 +122,7 @@ stau install fish --set DOTFILES_GUI=1 --non-interactive
 | `-p, --profile <NAME>` | Install the packages listed in `STAU_DIR/profiles/<NAME>` |
 | `--no-setup` | Skip running the setup script |
 | `--json` | Print a machine-readable JSON summary on stdout |
-| `--set KEY=VALUE` | Set an environment variable for hook scripts (repeatable) |
+| `--set KEY=VALUE` | Set a template variable or hook-script environment variable (repeatable; nested keys are template-only) |
 | `--non-interactive` | Connect hook script stdin to `/dev/null` |
 | `--script-timeout <DUR>` | Kill a hook script that runs longer than this (e.g. `30s`, `5m`) |
 | `-t, --target <DIR>` | Target directory (default: `$HOME` or `$STAU_TARGET`) |
@@ -148,7 +149,7 @@ stau uninstall --all --json             # Machine-readable summary
 | `-p, --profile <NAME>` | Uninstall the packages listed in `STAU_DIR/profiles/<NAME>` |
 | `--no-teardown` | Skip running the teardown script |
 | `--json` | Print a machine-readable JSON summary on stdout |
-| `--set KEY=VALUE` | Set an environment variable for hook scripts (repeatable) |
+| `--set KEY=VALUE` | Set a template variable or hook-script environment variable (repeatable; nested keys are template-only) |
 | `--non-interactive` | Connect hook script stdin to `/dev/null` |
 | `--script-timeout <DUR>` | Kill a hook script that runs longer than this (e.g. `30s`, `5m`) |
 | `-t, --target <DIR>` | Target directory (default: `$HOME` or `$STAU_TARGET`) |
@@ -180,7 +181,7 @@ stau restow ghostty --dry-run           # Preview changes
 | `--no-setup` | Skip running the setup script |
 | `--no-teardown` | Skip running the teardown script |
 | `--json` | Print a machine-readable JSON summary on stdout |
-| `--set KEY=VALUE` | Set an environment variable for hook scripts (repeatable) |
+| `--set KEY=VALUE` | Set a template variable or hook-script environment variable (repeatable; nested keys are template-only) |
 | `--non-interactive` | Connect hook script stdin to `/dev/null` |
 | `--script-timeout <DUR>` | Kill a hook script that runs longer than this (e.g. `30s`, `5m`) |
 | `-t, --target <DIR>` | Target directory |
@@ -193,16 +194,21 @@ Moves existing files from your home directory into the dotfiles repository and r
 
 Paths may be absolute or relative to the current directory, and must be inside the target directory. Only regular files can be adopted: directories and symlinks are skipped with a warning, so adopt the files inside a directory individually. All files are checked for conflicts before any file is moved.
 
+With `--template`, each file is stored in the package as `<rel>.tmpl` and, after the move, the original target is written as a regular file rendered from that template with the current data.
+
 ```bash
 stau adopt ghostty ~/.config/ghostty/config  # Adopt config file
 stau adopt git ~/.gitconfig                  # Adopt single file
 stau adopt tmux ~/.tmux.conf --dry-run       # Preview adoption
+stau adopt git ~/.gitconfig --template       # Adopt as a template
 ```
 
 **Options:**
 | Flag | Description |
 |------|-------------|
 | `-t, --target <DIR>` | Target directory |
+| `--template` | Store the file as `<rel>.tmpl` and render it back to the target |
+| `--set KEY=VALUE` | Set a template variable (repeatable) |
 | `-n, --dry-run` | Show what would be done without making changes |
 | `-v, --verbose` | Show detailed output |
 
@@ -333,6 +339,26 @@ stau completion bash > ~/.local/share/bash-completion/completions/stau
 
 This command works without a dotfiles directory, so it can be run before `STAU_DIR` exists — for example from a package's `setup.sh`.
 
+### `stau data`
+
+Prints the fully merged template data — auto facts plus the two data files plus any `--set` pairs — as TOML (default) or pretty JSON (`--json`).
+
+```bash
+stau data                          # TOML
+stau data --json                   # pretty JSON
+stau data --set host.pgx=10.0.0.1  # include an override
+```
+
+The subcommand `stau data set <key> <value>` upserts a dotted key into `~/.config/stau/machine.toml`, creating the directory and file as needed. The value is typed as a TOML literal when it parses (e.g. `22`, `true`, `[1,2]`), otherwise as a string. `--dry-run` prints the resulting file instead of writing it.
+
+### `stau render <file>`
+
+Resolves `<file>` relative to `STAU_DIR` when it is relative, renders it with the merged data, and prints the exact result to stdout (no added newline).
+
+```bash
+stau render git/.gitconfig.tmpl --set user.email=me@example.com
+```
+
 ## Setup and Teardown Scripts
 
 Each package can have optional automation scripts:
@@ -424,6 +450,54 @@ stau install ghostty --target /tmp/test
 - **System configs**: Manage `/etc` or other system directories
 - **Multiple users**: Install configs for different users
 
+## Templating
+
+A source file ending in `.tmpl` is rendered with [minijinja](https://github.com/mitsuhiko/minijinja) and written as a **regular file** at its target; the `.tmpl` suffix is stripped from the target name (`git/.gitconfig.tmpl` -> `~/.gitconfig`). Everything else stays a symlink. Rendering is strict: referencing a missing variable is an error (exit code 6), never empty output.
+
+### Variables
+
+Auto facts are read-only and live under the reserved top-level key `stau`:
+
+| Variable | Value |
+| - | - |
+| `stau.hostname` | `/proc/sys/kernel/hostname`, trimmed |
+| `stau.fqdn` | Best effort; equal to `stau.hostname` for now |
+| `stau.user` | `$USER`, then `$LOGNAME` (omitted if neither is set) |
+| `stau.home` | Your home directory (omitted if unknown) |
+| `stau.arch` | `std::env::consts::ARCH` |
+| `stau.os` | `std::env::consts::OS` (linux) |
+| `stau.kernel` | `/proc/sys/kernel/osrelease`, trimmed (omitted if unreadable) |
+| `stau.os_release` | `/etc/os-release`, lowercased and quote-stripped: `.id`, `.name`, `.version_id`, ... |
+
+User data lives at the top level: `{{ user.email }}`, `{{ host.pgx }}`. A user data key named `stau` is reserved and rejected.
+
+### Data sources
+
+Templates see the deep-merged result of these sources (lowest to highest precedence; tables merge recursively, scalars and arrays replace):
+
+1. the auto facts above;
+2. `<STAU_DIR>/.stau/data.toml` — committed repo defaults (optional);
+3. `~/.config/stau/machine.toml` — machine-local, gitignored (optional; respects `XDG_CONFIG_HOME`);
+4. `--set KEY=VALUE` (repeatable; dotted keys nest, values are strings).
+
+A missing file is not an error; a present file that fails to parse is a template error (exit 6) naming the path.
+
+### Commands
+
+```bash
+stau data                          # print the fully merged data as TOML
+stau data --json                   # ... as pretty JSON
+stau data set host.pgx 10.0.0.1    # upsert a dotted key into machine.toml
+stau render .gitconfig.tmpl        # render one file to stdout (no added newline)
+stau adopt git ~/.gitconfig --template   # adopt as a template and render it back
+```
+
+`stau data set <key> <value>` types the value as a TOML literal when it parses (numbers, booleans, arrays, quoted strings), otherwise as a string, and honours `--dry-run` by printing the resulting file instead of writing it.
+
+### v1 tradeoffs
+
+A rendered target is a plain regular file, so it is not live: editing the target does not change the template, and a later `status` reports the file as `drift`. Re-render with `restow` (or `install` again, which leaves an up-to-date file alone). `uninstall` removes the rendered file and never copies the template back; if the target's bytes differ from the current render, a warning reports that local modifications were discarded. Put machine-specific values in `machine.toml` so `status`, `verify`, and `list` can re-render them; `--set` values are ephemeral and must be re-supplied to those commands.
+
 ## Profiles
 
 A profile is an ordered package list stored as a plain text file at `<STAU_DIR>/profiles/<name>`. Blank lines and lines starting with `#` are ignored; every other line names one package. The order of the lines is the order packages are processed, which is what lets a profile express dependency order for hooks (e.g. `mise` before `sesh`).
@@ -467,6 +541,7 @@ stau uses specific exit codes to indicate different error conditions:
 | 3    | Permission denied or I/O error                                        |
 | 4    | Setup script failed (including a script timeout)                      |
 | 5    | `verify` found a file not in the expected state                       |
+| 6    | Template parse/render or data-file error                               |
 
 With `--all`, every package is processed even if some fail. The command then exits with code 1 if any package failed.
 
@@ -487,6 +562,7 @@ stau automatically ignores these files at the package root:
 
 - `setup.sh` and `teardown.sh` (script files)
 - `.git`, `.gitignore`, `.gitattributes`, `.gitmodules` (version control)
+- `.stau` (reserved for package data)
 
 Files with these names in subdirectories (for example `.local/bin/setup.sh`) are linked normally.
 

@@ -13,7 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
-* **list:** report each package as one aligned row with a short state token and a notes column, and add `--long` (`-l`) to show link counts and hooks for every package
+* **templating:** render `*.tmpl` sources to regular files at their target with minijinja, using per-machine data from `stau.*` facts, `<STAU_DIR>/.stau/data.toml`, `~/.config/stau/machine.toml`, and `--set KEY=VALUE` (deep-merged; missing variables are strict errors)
+* **cli:** add `stau data` (print the merged data as TOML or `--json`; `stau data set <key> <value>` upserts into `machine.toml`) and `stau render <file>` (render one template to stdout)
+* **cli:** add `adopt --template`, storing the adopted file as `<rel>.tmpl` and rendering it back to the target
+* **status:** add the `drift` file state (a rendered target whose bytes differ from the current render) to `status`/`list` output, the JSON envelope, and `verify` mismatches
+* **list:** report the new package state token (`ok`, `partial`, `missing`, `conflict`, `hook`) with a notes column, and add `--long` (`-l`) to show link counts and hooks for every package
 * **cli:** add `stau completion <shell>`, printing a static completion script for bash, elvish, fish, powershell, or zsh; it runs without a `STAU_DIR`
 * **cli:** hint `--target` as a directory and `adopt` file arguments as paths, so shells complete paths for them
 
