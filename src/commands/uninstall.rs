@@ -3,7 +3,7 @@ use crate::config::Config;
 use crate::error::{self, Result};
 use crate::options::RunOptions;
 use crate::symlink::MappingKind;
-use crate::{package, script, symlink};
+use crate::{package, script, symlink, template};
 use std::path::{Path, PathBuf};
 
 /// Options for uninstall operations.
@@ -88,7 +88,7 @@ pub fn uninstall_package_internal(
 
     let teardown_failed = run_teardown_script(config, package, &target_dir, &opts, script_options);
 
-    let mappings = match package::discover_package_files(&package_dir, &target_dir, data) {
+    let mut mappings = match package::discover_package_files(&package_dir, &target_dir) {
         Ok(mappings) => mappings,
         Err(e) => {
             return PackageOutcome {
@@ -97,6 +97,9 @@ pub fn uninstall_package_internal(
             };
         }
     };
+    // Best effort: rendering only feeds the drift warning. A broken template
+    // must not prevent removal, so render failures are recorded, not returned.
+    template::render_mappings(&mut mappings, data);
     if opts.verbose && !opts.json {
         let has_render = mappings.iter().any(|m| m.kind == MappingKind::Render);
         if has_render {
@@ -217,11 +220,12 @@ fn remove_package_symlink(
     match mapping.kind {
         MappingKind::Symlink => remove_symlink(mapping, opts),
         MappingKind::Render => {
-            let content = mapping
-                .rendered
-                .as_deref()
-                .expect("render mapping carries content");
-            if !opts.dry_run && symlink::rendered_differs(&mapping.target, content)? {
+            // The drift warning needs a successful render; a render_error skips
+            // it, but removal still succeeds whenever the target is a regular file.
+            if !opts.dry_run
+                && let Some(content) = mapping.rendered.as_deref()
+                && symlink::rendered_differs(&mapping.target, content)?
+            {
                 eprintln!(
                     "Warning: discarding local modifications to {} (uninstall removes rendered files)",
                     mapping.target.display()

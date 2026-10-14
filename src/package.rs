@@ -1,6 +1,5 @@
 use crate::error::{Result, StauError, map_io_error};
 use crate::symlink::{self, MappingKind, SymlinkMapping};
-use crate::template;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -10,12 +9,12 @@ use std::path::{Path, PathBuf};
 /// Returns a list of `SymlinkMapping` structs representing the source files in the package
 /// and their corresponding target locations. Setup/teardown scripts, version control
 /// files at the package root, and the reserved `.stau` directory are excluded.
-/// A `*.tmpl` source is a [`MappingKind::Render`] mapping whose `rendered` contents are
-/// filled in by rendering the template with `data`; a render error fails discovery.
+/// A `*.tmpl` source is a [`MappingKind::Render`] mapping; discovery only classifies
+/// it and never reads or renders the template, so a broken template does not fail
+/// discovery (see [`crate::template::render_mappings`]).
 pub fn discover_package_files(
     package_dir: &Path,
     target_dir: &Path,
-    data: &serde_json::Value,
 ) -> Result<Vec<SymlinkMapping>> {
     if !package_dir.exists() {
         return Err(StauError::PackageNotFound(
@@ -47,14 +46,6 @@ pub fn discover_package_files(
                 window[0].source.display(),
                 window[1].source.display()
             )));
-        }
-    }
-
-    for mapping in &mut mappings {
-        if mapping.kind == MappingKind::Render {
-            let content = template::render(&mapping.source, data)?;
-            *mapping =
-                SymlinkMapping::render(mapping.source.clone(), mapping.target.clone(), content);
         }
     }
 
@@ -227,6 +218,7 @@ fn walk_directory(
                     target: target_path,
                     kind: MappingKind::Render,
                     rendered: None,
+                    render_error: None,
                 }),
             }
         }
@@ -295,11 +287,6 @@ mod tests {
     use std::fs::File;
     use tempfile::TempDir;
 
-    /// Empty template data (no user variables), sufficient for plain-text templates.
-    fn data() -> serde_json::Value {
-        serde_json::json!({ "stau": {} })
-    }
-
     #[test]
     fn test_discover_simple_package() {
         let temp_dir = TempDir::new().unwrap();
@@ -311,7 +298,7 @@ mod tests {
         File::create(package_dir.join(".bashrc")).unwrap();
         File::create(package_dir.join(".vimrc")).unwrap();
 
-        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
+        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
 
         assert_eq!(mappings.len(), 2);
         assert!(
@@ -338,7 +325,7 @@ mod tests {
         File::create(package_dir.join(".config/nvim/init.lua")).unwrap();
         File::create(package_dir.join(".bashrc")).unwrap();
 
-        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
+        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
 
         assert_eq!(mappings.len(), 2);
         assert!(
@@ -360,7 +347,7 @@ mod tests {
         File::create(package_dir.join("teardown.sh")).unwrap();
         File::create(package_dir.join(".bashrc")).unwrap();
 
-        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
+        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
 
         // Should only find .bashrc, not the scripts
         assert_eq!(mappings.len(), 1);
@@ -378,7 +365,7 @@ mod tests {
         File::create(package_dir.join(".gitignore")).unwrap();
         File::create(package_dir.join(".bashrc")).unwrap();
 
-        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
+        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
 
         // Should skip .git and .gitignore at root, but include .bashrc (it's a config file)
         assert_eq!(mappings.len(), 1);
@@ -411,7 +398,7 @@ mod tests {
         let package_dir = temp_dir.path().join("nonexistent");
         let target_dir = temp_dir.path().join("target");
 
-        let result = discover_package_files(&package_dir, &target_dir, &data());
+        let result = discover_package_files(&package_dir, &target_dir);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), StauError::PackageNotFound(_)));
     }
@@ -516,7 +503,7 @@ mod tests {
         File::create(package_dir.join(".local/bin/teardown.sh")).unwrap();
         File::create(package_dir.join("sub/.gitignore")).unwrap();
 
-        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
+        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
 
         assert_eq!(mappings.len(), 3);
         assert!(
@@ -544,7 +531,7 @@ mod tests {
         fs::create_dir(&package_dir).unwrap();
         fs::write(package_dir.join("foo.tmpl"), "hello").unwrap();
 
-        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
+        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
 
         assert_eq!(mappings.len(), 1);
         let mapping = &mappings[0];
@@ -552,7 +539,25 @@ mod tests {
         assert!(mapping.source.ends_with("foo.tmpl"));
         assert!(mapping.target.ends_with("foo"));
         assert!(!mapping.target.ends_with("foo.tmpl"));
-        assert_eq!(mapping.rendered.as_deref(), Some("hello"));
+        // Discovery only classifies; rendering happens later via render_mappings.
+        assert_eq!(mapping.rendered, None);
+        assert_eq!(mapping.render_error, None);
+    }
+
+    #[test]
+    fn test_tmpl_discovery_ignores_unrenderable_template() {
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = temp_dir.path().join("pkg");
+        let target_dir = temp_dir.path().join("target");
+        fs::create_dir(&package_dir).unwrap();
+        fs::write(package_dir.join("foo.tmpl"), "x = {{ missing.var }}").unwrap();
+
+        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
+
+        assert_eq!(mappings.len(), 1);
+        assert_eq!(mappings[0].kind, MappingKind::Render);
+        assert_eq!(mappings[0].rendered, None);
+        assert_eq!(mappings[0].render_error, None);
     }
 
     #[test]
@@ -563,7 +568,7 @@ mod tests {
         fs::create_dir(&package_dir).unwrap();
         fs::write(package_dir.join("foo.tmpl"), "hello").unwrap();
 
-        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
+        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
 
         assert_eq!(mappings.len(), 1);
         assert!(
@@ -582,7 +587,7 @@ mod tests {
         fs::write(package_dir.join("foo"), "plain").unwrap();
         fs::write(package_dir.join("foo.tmpl"), "tmpl").unwrap();
 
-        let err = discover_package_files(&package_dir, &target_dir, &data()).unwrap_err();
+        let err = discover_package_files(&package_dir, &target_dir).unwrap_err();
         assert!(matches!(err, StauError::InvalidArguments(_)), "got {err:?}");
         assert!(err.to_string().contains("foo"), "message: {err}");
     }
@@ -595,7 +600,7 @@ mod tests {
         fs::create_dir(&package_dir).unwrap();
         fs::write(package_dir.join("foo.tmpl.bak"), "x").unwrap();
 
-        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
+        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
 
         assert_eq!(mappings.len(), 1);
         assert_eq!(mappings[0].kind, MappingKind::Symlink);
@@ -611,7 +616,7 @@ mod tests {
         fs::create_dir(&package_dir).unwrap();
         fs::write(package_dir.join(".tmpl"), "x").unwrap();
 
-        let err = discover_package_files(&package_dir, &target_dir, &data()).unwrap_err();
+        let err = discover_package_files(&package_dir, &target_dir).unwrap_err();
         assert!(matches!(err, StauError::InvalidPath(_)), "got {err:?}");
     }
 
@@ -624,7 +629,7 @@ mod tests {
         fs::write(package_dir.join(".stau/data.toml"), "x = 1").unwrap();
         fs::write(package_dir.join(".bashrc"), "x").unwrap();
 
-        let mappings = discover_package_files(&package_dir, &target_dir, &data()).unwrap();
+        let mappings = discover_package_files(&package_dir, &target_dir).unwrap();
 
         assert_eq!(mappings.len(), 1);
         assert!(mappings[0].target.ends_with(".bashrc"));

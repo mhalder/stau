@@ -3,7 +3,7 @@ use crate::config::Config;
 use crate::error::{self, StauError};
 use crate::options::RunOptions;
 use crate::symlink::MappingKind;
-use crate::{package, script, symlink};
+use crate::{package, script, symlink, template};
 
 /// Installs a package by creating symlinks from the package directory to the target directory.
 ///
@@ -31,10 +31,17 @@ pub fn install_package(
     }
 
     // Discover all files in the package
-    let mappings = match package::discover_package_files(&package_dir, &target_dir, &run.data) {
+    let mut mappings = match package::discover_package_files(&package_dir, &target_dir) {
         Ok(mappings) => mappings,
         Err(e) => return PackageOutcome::failed(e),
     };
+
+    // Render every template up front; a broken template must fail the whole
+    // package before any symlink or file is created (no partial install).
+    template::render_mappings(&mut mappings, &run.data);
+    if let Some(e) = template::collect_render_errors(&mappings) {
+        return PackageOutcome::failed(e);
+    }
 
     if run.verbose && !run.json {
         println!("Found {} files to link", mappings.len());

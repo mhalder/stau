@@ -4,6 +4,7 @@ use super::uninstall::{UninstallOptions, uninstall_package_internal};
 use crate::config::Config;
 use crate::error;
 use crate::options::RunOptions;
+use crate::{package, template};
 
 /// Restows a package by removing its symlinks without copying files back, then
 /// installing it again.
@@ -14,6 +15,22 @@ pub fn restow_package(
     no_teardown: bool,
     run: &RunOptions,
 ) -> PackageOutcome {
+    // Render every template up front: a broken template must fail the restow
+    // before the uninstall phase, so it cannot leave the package half-removed.
+    let target_dir = config.get_target(run.target.clone());
+    let package_dir = config.get_package_dir(package);
+    if !config.package_exists(package) {
+        return PackageOutcome::failed(error::StauError::PackageNotFound(package.to_string()));
+    }
+    let mut mappings = match package::discover_package_files(&package_dir, &target_dir) {
+        Ok(mappings) => mappings,
+        Err(e) => return PackageOutcome::failed(e),
+    };
+    template::render_mappings(&mut mappings, &run.data);
+    if let Some(e) = template::collect_render_errors(&mappings) {
+        return PackageOutcome::failed(e);
+    }
+
     let opts = UninstallOptions {
         no_teardown,
         copy_files_back: false,

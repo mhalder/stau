@@ -1,4 +1,5 @@
 use crate::error::{Result, StauError, map_io_error};
+use crate::symlink::{MappingKind, SymlinkMapping};
 use minijinja::{Environment, UndefinedBehavior};
 use serde_json::{Map, Value};
 use std::fs;
@@ -111,6 +112,40 @@ pub fn render(source: &Path, data: &Value) -> Result<String> {
     template
         .render(data)
         .map_err(|e| template_error(source, &e))
+}
+
+/// Renders every `Render` mapping, recording the outcome per mapping instead of
+/// returning early: on success `rendered` is set, on failure `render_error` is
+/// set. One broken template must not hide the state of its siblings.
+pub fn render_mappings(mappings: &mut [SymlinkMapping], data: &Value) {
+    for mapping in mappings {
+        if mapping.kind != MappingKind::Render {
+            continue;
+        }
+        match render(&mapping.source, data) {
+            Ok(content) => {
+                *mapping =
+                    SymlinkMapping::render(mapping.source.clone(), mapping.target.clone(), content);
+            }
+            Err(error) => {
+                mapping.render_error = Some(error.to_string());
+            }
+        }
+    }
+}
+
+/// Returns a `TemplateError` naming every mapping whose render failed, or `None`
+/// when every `Render` mapping rendered successfully.
+pub fn collect_render_errors(mappings: &[SymlinkMapping]) -> Option<StauError> {
+    let messages: Vec<&str> = mappings
+        .iter()
+        .filter_map(|mapping| mapping.render_error.as_deref())
+        .collect();
+    if messages.is_empty() {
+        None
+    } else {
+        Some(StauError::TemplateError(messages.join("\n")))
+    }
 }
 
 /// Parses `KEY=VALUE` pairs into a nested object, so `host.pgx=10.0.0.1`
@@ -419,5 +454,50 @@ mod tests {
             let err = parse_sets(&[format!("{var}=x")]).unwrap_err();
             assert!(matches!(err, StauError::InvalidArguments(_)), "got {err:?}");
         }
+    }
+
+    #[test]
+    fn test_render_mappings_records_error_and_renders_siblings() {
+        use crate::symlink::MappingKind;
+
+        let tmp = TempDir::new().unwrap();
+        let good = tmp.path().join("good.tmpl");
+        let bad = tmp.path().join("bad.tmpl");
+        fs::write(&good, "hello {{ name }}").unwrap();
+        fs::write(&bad, "{{ missing.var }}").unwrap();
+
+        let mut mappings = vec![
+            SymlinkMapping::new(tmp.path().join("plain"), tmp.path().join("plain-target")),
+            SymlinkMapping {
+                source: good.clone(),
+                target: tmp.path().join("good-target"),
+                kind: MappingKind::Render,
+                rendered: None,
+                render_error: None,
+            },
+            SymlinkMapping {
+                source: bad.clone(),
+                target: tmp.path().join("bad-target"),
+                kind: MappingKind::Render,
+                rendered: None,
+                render_error: None,
+            },
+        ];
+
+        let data = serde_json::json!({ "name": "alice" });
+        render_mappings(&mut mappings, &data);
+
+        // The symlink mapping is untouched.
+        assert_eq!(mappings[0].kind, MappingKind::Symlink);
+        assert_eq!(mappings[0].rendered, None);
+        // The good template renders; the bad one records an error.
+        assert_eq!(mappings[1].rendered.as_deref(), Some("hello alice"));
+        assert_eq!(mappings[1].render_error, None);
+        assert_eq!(mappings[2].rendered, None);
+        assert!(mappings[2].render_error.is_some());
+
+        let error = collect_render_errors(&mappings).expect("one render failed");
+        assert!(matches!(error, StauError::TemplateError(_)));
+        assert!(error.to_string().contains("bad.tmpl"), "message: {error}");
     }
 }

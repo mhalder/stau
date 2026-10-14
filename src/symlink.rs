@@ -22,8 +22,10 @@ pub struct SymlinkMapping {
     pub target: PathBuf,
     /// How the source is materialized at the target.
     pub kind: MappingKind,
-    /// The rendered contents, `Some(..)` iff `kind == Render`.
+    /// The rendered contents, `Some(..)` iff `kind == Render` and rendering succeeded.
     pub rendered: Option<String>,
+    /// The render failure, `Some(..)` iff `kind == Render` and rendering failed.
+    pub render_error: Option<String>,
 }
 
 impl SymlinkMapping {
@@ -34,6 +36,7 @@ impl SymlinkMapping {
             target,
             kind: MappingKind::Symlink,
             rendered: None,
+            render_error: None,
         }
     }
 
@@ -44,6 +47,7 @@ impl SymlinkMapping {
             target,
             kind: MappingKind::Render,
             rendered: Some(content),
+            render_error: None,
         }
     }
 }
