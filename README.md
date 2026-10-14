@@ -570,10 +570,10 @@ Files with these names in subdirectories (for example `.local/bin/setup.sh`) are
 
 ## Agent Skill
 
-[`docs/SKILL.md`](docs/SKILL.md) is a [pi](https://pi.dev) skill that teaches a coding agent to operate stau safely: inspecting packages before changing them, previewing with `--dry-run`, resolving conflicts, and interpreting exit codes. Load it by path, for example:
+[`skills/stau/SKILL.md`](skills/stau/SKILL.md) is a [pi](https://pi.dev) skill that teaches a coding agent to operate stau safely: inspecting packages before changing them, previewing with `--dry-run`, resolving conflicts, and interpreting exit codes. It follows the `skills/<name>/SKILL.md` layout, so the skills CLI discovers it in this repository. Load it by path, for example:
 
 ```bash
-pi --skill docs/SKILL.md
+pi --skill skills/stau/SKILL.md
 ```
 
 ## Tips and Best Practices
