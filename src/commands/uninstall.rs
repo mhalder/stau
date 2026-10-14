@@ -221,10 +221,14 @@ fn remove_package_symlink(
         MappingKind::Symlink => remove_symlink(mapping, opts),
         MappingKind::Render => {
             // The drift warning needs a successful render; a render_error skips
-            // it, but removal still succeeds whenever the target is a regular file.
+            // it. The read is best-effort: an unreadable target must not block
+            // removal, which only needs write permission on the parent dir.
             if !opts.dry_run
                 && let Some(content) = mapping.rendered.as_deref()
-                && symlink::rendered_differs(&mapping.target, content)?
+                && matches!(
+                    symlink::rendered_differs(&mapping.target, content),
+                    Ok(true)
+                )
             {
                 eprintln!(
                     "Warning: discarding local modifications to {} (uninstall removes rendered files)",
