@@ -21,7 +21,7 @@ Traditional tools like GNU Stow excel at symlink management but lack automation 
 - **Ordered Package Lists**: Install several packages in one command, in the order given
 - **Profiles**: Group packages into an ordered list with `--profile <name>`
 - **Machine-readable Output**: `--json` summaries and a `verify` command with a stable exit code
-- **Automation-safe Hooks**: `--non-interactive`, `--script-timeout`, and `--set` for hook scripts
+- **Automation-safe Hooks**: `--non-interactive`, `--script-timeout`, and `--set` for hook scripts and template data
 - **XDG Compliant**: Supports `~/.config/dotfiles` (preferred) and `~/dotfiles` (fallback)
 - **Linux Native**: Written in Rust for Linux with proper home directory and XDG detection
 
@@ -100,7 +100,7 @@ Organize your dotfiles in a directory structure where each subdirectory is a "pa
 
 ### `stau install [package...]` (aliases: `i`, `add`)
 
-Creates symlinks from your dotfiles packages to the target directory and runs each package's `setup.sh` script if present. Multiple package names are installed in the order given; `--all` installs every package alphabetically; `--profile <name>` installs the ordered list from a profile.
+Creates symlinks from your dotfiles packages to the target directory (and renders each `*.tmpl` file to a regular file), then runs each package's `setup.sh` script if present. Multiple package names are installed in the order given; `--all` installs every package alphabetically; `--profile <name>` installs the ordered list from a profile.
 
 ```bash
 stau install ghostty                    # Basic install
@@ -131,7 +131,7 @@ stau install fish --set DOTFILES_GUI=1 --non-interactive
 
 ### `stau uninstall [package...]` (aliases: `u`, `rm`)
 
-Runs `teardown.sh` (if present), removes symlinks, and restores original files from the dotfiles repo. This "unadopts" the dotfiles, leaving you with standalone config files. Multiple package names are processed in the order given; `--all` processes every package alphabetically.
+Runs `teardown.sh` (if present), removes symlinks, and restores original files from the dotfiles repo. This "unadopts" the dotfiles, leaving you with standalone config files. A rendered `*.tmpl` target is removed without copying the template back; a warning reports it when the target's bytes had drifted. Multiple package names are processed in the order given; `--all` processes every package alphabetically.
 
 ```bash
 stau uninstall ghostty                  # Basic uninstall
@@ -162,7 +162,7 @@ If a symlink cannot be removed or its file cannot be copied back, uninstall stil
 
 ### `stau restow <package...>` (alias: `r`)
 
-Removes and recreates symlinks for one or more packages. Useful after modifying the package structure or adding new files. Unlike `uninstall`, this does **not** copy files back. By default, both teardown and setup scripts run during restow. A package list is processed in the order given; `--all` restows every package alphabetically; `--profile <name>` restows a profile's ordered list.
+Removes and recreates symlinks (and re-renders each `*.tmpl` file) for one or more packages. Useful after modifying the package structure, a template, or adding new files. Unlike `uninstall`, this does **not** copy files back. By default, both teardown and setup scripts run during restow. A package list is processed in the order given; `--all` restows every package alphabetically; `--profile <name>` restows a profile's ordered list.
 
 ```bash
 stau restow ghostty                     # Refresh symlinks (runs teardown + setup)
@@ -216,9 +216,9 @@ stau adopt git ~/.gitconfig --template       # Adopt as a template
 
 Shows all packages in your dotfiles directory and their installation status. Each package is one row: a short state token and, only when it adds information, a note column.
 
-The state is `ok` (every file linked), `partial` (some files linked), `missing` (no files linked), `conflict` (a target path is occupied by something stau did not create), or `hook` (no files to link, only setup/teardown hooks). Because stau does not record hook runs, `hook` describes the package's shape rather than an observed installation.
+The state is `ok` (every file linked), `partial` (some files linked), `missing` (no files linked), `conflict` (a target path is occupied by something stau did not create), `error` (a `*.tmpl` file in the package does not render), or `hook` (no files to link, only setup/teardown hooks). Because stau does not record hook runs, `hook` describes the package's shape rather than an observed installation.
 
-Notes report link counts for anything that is not `ok`, the hooks of a `hook` package, and any broken links — stale symlinks left behind by files removed from the package. `--long` adds the link count and hooks to every row. A summary line tallies the states and any broken links.
+Notes report link counts for anything that is not `ok`, the hooks of a `hook` package, the number of `drift` files (rendered targets edited since their template), and any broken links — stale symlinks left behind by files removed from the package. `--long` adds the link count and hooks to every row. A summary line tallies the states, any broken links, and any packages that failed to render.
 
 ```bash
 stau list                           # List all packages
@@ -238,8 +238,10 @@ Target: /home/user
   sway      partial  2/3 links
   tmux      missing  0/2 links
   yazi      ok       2 broken
+  conf      partial  1 drift
+  badtmpl   error    failed to render template ...
 
-3 ok, 1 partial, 1 missing, 0 conflict, 1 hook-only; 2 broken links
+3 ok, 2 partial, 1 missing, 0 conflict, 1 hook-only; 2 broken links; 1 error
 ```
 
 **Options:**
@@ -250,7 +252,7 @@ Target: /home/user
 
 ### `stau status <package...>` (alias: `s`)
 
-Shows detailed status for one or more packages, including each file's symlink state. `--json` prints a machine-readable envelope for the named packages (or every package when none are named) and accepts `[restored]` as a file state — a regular file whose contents equal the package source, which is what `uninstall` leaves behind. An unreadable target file is reported as `[conflict]` rather than failing the whole report. The package-level `state` is `installed`, `partial`, `not_installed`, `conflict`, or `hook_only` — a package with no files to link, only hooks, whose installation is not represented by symlinks.
+Shows detailed status for one or more packages, including each file's state: `[installed]`, `[not installed]`, `[conflict]`, `[restored]`, `[BROKEN]`, `[drift]`, or `[error]`. `[restored]` is a regular file whose contents equal the package source, which is what `uninstall` leaves behind. For a rendered `*.tmpl` target, `[installed]` means its bytes match the template's render, `[drift]` means they differ, and `[error]` means the template itself does not render. `--json` prints a machine-readable envelope for the named packages (or every package when none are named). An unreadable target file is reported as `[conflict]` rather than failing the whole report. The package-level `state` is `installed`, `partial`, `not_installed`, `conflict`, or `hook_only` — a package with no files to link, only hooks, whose installation is not represented by symlinks.
 
 ```bash
 stau status ghostty                     # Show detailed status
@@ -284,7 +286,7 @@ Summary: 1 installed, 0 not installed, 0 broken
 
 ### `stau verify <package...>` (alias: `v`)
 
-Checks that every file currently present in each named package is in the expected state and exits non-zero on the first mismatch. `--expect installed` (the default) requires each file to be a symlink into the package; `--expect uninstalled` requires each file to be a `restored` plain copy whose contents match the package source. A stale symlink left by a file removed from the package is not a file of the package, so `verify` ignores it (it shows up in `status` and is removable with `clean`).
+Checks that every file currently present in each named package is in the expected state and exits non-zero on the first mismatch. `--expect installed` (the default) requires each file to be a symlink into the package or, for a `*.tmpl` file, a regular target whose bytes match the template's render; `--expect uninstalled` requires each file to be a `restored` plain copy whose contents match the package source. A `[drift]` or `[error]` file is a mismatch under either expectation. A stale symlink left by a file removed from the package is not a file of the package, so `verify` ignores it (it shows up in `status` and is removable with `clean`).
 
 ```bash
 stau verify --expect installed ghostty   # Exit 0 only if fully linked
@@ -525,7 +527,7 @@ The `profiles` directory itself is never treated as a package by `--all`, `list`
 
 Three commands produce stable machine-readable output:
 
-- `stau status --json [<package>...]` prints one JSON object with `stau_dir`, `target`, and a `packages` array of per-package state, counts, and files.
+- `stau status --json [<package>...]` prints one JSON object with `stau_dir`, `target`, and a `packages` array of per-package state, counts, and files. Counts include `drift` (rendered files whose bytes differ from their template) and `error` (templates that no longer render).
 - `stau verify [--json] <package>...` prints per-file mismatches; with `--json` it prints `{"ok": bool, "packages": [...]}` and exits 5 on any mismatch.
 - `stau install|uninstall|restow --json` print a summary object on stdout, also when some packages failed (the command still exits 1). Each package entry carries `name` and `ok`; on failure it also carries `error`, `exit_code` and `error_kind`, and a teardown script that failed while the uninstall carried on is marked `teardown_failed: true`.
 
