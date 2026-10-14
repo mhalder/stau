@@ -2,6 +2,7 @@ use super::batch::{BatchLabels, PackageOutcome, run_for_packages};
 use crate::config::Config;
 use crate::error::{self, StauError};
 use crate::options::RunOptions;
+use crate::symlink::MappingKind;
 use crate::{package, script, symlink};
 
 /// Installs a package by creating symlinks from the package directory to the target directory.
@@ -30,7 +31,7 @@ pub fn install_package(
     }
 
     // Discover all files in the package
-    let mappings = match package::discover_package_files(&package_dir, &target_dir) {
+    let mappings = match package::discover_package_files(&package_dir, &target_dir, &run.data) {
         Ok(mappings) => mappings,
         Err(e) => return PackageOutcome::failed(e),
     };
@@ -44,33 +45,81 @@ pub fn install_package(
             println!("No files to link in package '{}'", package);
         }
     } else {
-        // Check every target for conflicts before creating any symlink, so a
+        // Check every target for conflicts before creating any link or file, so a
         // conflict does not leave the package partially installed
         if let Err(e) = symlink::check_conflicts(&mappings) {
             return PackageOutcome::failed(e);
         }
 
-        // Create symlinks for all files
+        // Create symlinks / write rendered files for all mappings
         for mapping in &mappings {
-            if (run.verbose || run.dry_run) && !run.json {
-                println!(
-                    "  {} -> {}",
-                    mapping.target.display(),
-                    mapping.source.display()
-                );
-            }
-
-            if let Err(e) = symlink::create_symlink(&mapping.source, &mapping.target, run.dry_run) {
-                return PackageOutcome::failed(e);
+            match mapping.kind {
+                MappingKind::Symlink => {
+                    if (run.verbose || run.dry_run) && !run.json {
+                        println!(
+                            "  {} -> {}",
+                            mapping.target.display(),
+                            mapping.source.display()
+                        );
+                    }
+                    if let Err(e) =
+                        symlink::create_symlink(&mapping.source, &mapping.target, run.dry_run)
+                    {
+                        return PackageOutcome::failed(e);
+                    }
+                }
+                MappingKind::Render => {
+                    let content = mapping
+                        .rendered
+                        .as_deref()
+                        .expect("render mapping carries content");
+                    if (run.verbose || run.dry_run) && !run.json {
+                        if symlink::rendered_is_current(&mapping.target, content).unwrap_or(false) {
+                            println!("  {} (up to date)", mapping.target.display());
+                        } else {
+                            println!(
+                                "  {} <- {}",
+                                mapping.target.display(),
+                                mapping.source.display()
+                            );
+                        }
+                    }
+                    if let Err(e) = symlink::write_rendered(
+                        &mapping.source,
+                        &mapping.target,
+                        content,
+                        run.dry_run,
+                    ) {
+                        return PackageOutcome::failed(e);
+                    }
+                }
             }
         }
 
         if !run.dry_run && !run.json {
-            println!(
-                "Successfully installed {} ({} symlinks created)",
-                package,
-                mappings.len()
-            );
+            let symlinks = mappings
+                .iter()
+                .filter(|m| m.kind == MappingKind::Symlink)
+                .count();
+            let renders = mappings
+                .iter()
+                .filter(|m| m.kind == MappingKind::Render)
+                .count();
+            let message = match (symlinks, renders) {
+                (_, 0) => format!(
+                    "Successfully installed {} ({} symlinks created)",
+                    package, symlinks
+                ),
+                (0, _) => format!(
+                    "Successfully installed {} ({} files rendered)",
+                    package, renders
+                ),
+                (s, r) => format!(
+                    "Successfully installed {} ({} symlinks created, {} files rendered)",
+                    package, s, r
+                ),
+            };
+            println!("{message}");
         }
     }
 

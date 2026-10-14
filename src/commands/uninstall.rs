@@ -2,6 +2,7 @@ use super::batch::{BatchLabels, PackageOutcome, run_for_packages};
 use crate::config::Config;
 use crate::error::{self, Result};
 use crate::options::RunOptions;
+use crate::symlink::MappingKind;
 use crate::{package, script, symlink};
 use std::path::{Path, PathBuf};
 
@@ -37,7 +38,14 @@ pub fn uninstall_package(
         verbose: run.verbose,
         json: run.json,
     };
-    uninstall_package_internal(config, package, run.target.clone(), opts, &run.script)
+    uninstall_package_internal(
+        config,
+        package,
+        run.target.clone(),
+        opts,
+        &run.script,
+        &run.data,
+    )
 }
 
 /// Uninstalls every package in `packages`, in the order given, continuing past
@@ -64,6 +72,7 @@ pub fn uninstall_package_internal(
     target: Option<PathBuf>,
     opts: UninstallOptions,
     script_options: &crate::script::ScriptOptions,
+    data: &serde_json::Value,
 ) -> PackageOutcome {
     let target_dir = config.get_target(target);
     let package_dir = config.get_package_dir(package);
@@ -79,7 +88,7 @@ pub fn uninstall_package_internal(
 
     let teardown_failed = run_teardown_script(config, package, &target_dir, &opts, script_options);
 
-    let mappings = match package::discover_package_files(&package_dir, &target_dir) {
+    let mappings = match package::discover_package_files(&package_dir, &target_dir, data) {
         Ok(mappings) => mappings,
         Err(e) => {
             return PackageOutcome {
@@ -89,7 +98,12 @@ pub fn uninstall_package_internal(
         }
     };
     if opts.verbose && !opts.json {
-        println!("Found {} symlinks to remove", mappings.len());
+        let has_render = mappings.iter().any(|m| m.kind == MappingKind::Render);
+        if has_render {
+            println!("Found {} files to remove", mappings.len());
+        } else {
+            println!("Found {} symlinks to remove", mappings.len());
+        }
     }
 
     if mappings.is_empty() {
@@ -103,8 +117,8 @@ pub fn uninstall_package_internal(
     }
 
     match remove_package_symlinks(&mappings, &opts) {
-        Ok(removed_count) => {
-            print_uninstall_summary(package, removed_count, &opts);
+        Ok((symlinks, renders)) => {
+            print_uninstall_summary(package, symlinks, renders, &opts);
             PackageOutcome {
                 error: None,
                 teardown_failed,
@@ -159,27 +173,35 @@ fn run_teardown_script(
     }
 }
 
-/// Removes every stau symlink of a package, continuing past failures so one bad file
-/// does not leave the rest of the package installed.
+/// Removes every stau symlink and rendered file of a package, continuing past
+/// failures so one bad file does not leave the rest of the package installed.
 ///
 /// Every failure is reported; the last one is returned so its exit code is used.
+/// Returns `(symlinks_removed, renders_removed)`.
 fn remove_package_symlinks(
     mappings: &[symlink::SymlinkMapping],
     opts: &UninstallOptions,
-) -> Result<usize> {
-    let mut removed_count = 0;
+) -> Result<(usize, usize)> {
+    let mut symlinks = 0;
+    let mut renders = 0;
     let mut errors = Vec::new();
 
     for mapping in mappings {
         match remove_package_symlink(mapping, opts) {
-            Ok(true) => removed_count += 1,
+            Ok(true) => {
+                if mapping.kind == MappingKind::Symlink {
+                    symlinks += 1;
+                } else {
+                    renders += 1;
+                }
+            }
             Ok(false) => {}
             Err(e) => errors.push(e),
         }
     }
 
     let Some(last_error) = errors.pop() else {
-        return Ok(removed_count);
+        return Ok((symlinks, renders));
     };
 
     for e in &errors {
@@ -192,6 +214,28 @@ fn remove_package_symlink(
     mapping: &symlink::SymlinkMapping,
     opts: &UninstallOptions,
 ) -> Result<bool> {
+    match mapping.kind {
+        MappingKind::Symlink => remove_symlink(mapping, opts),
+        MappingKind::Render => {
+            let content = mapping
+                .rendered
+                .as_deref()
+                .expect("render mapping carries content");
+            if !opts.dry_run && symlink::rendered_differs(&mapping.target, content)? {
+                eprintln!(
+                    "Warning: discarding local modifications to {} (uninstall removes rendered files)",
+                    mapping.target.display()
+                );
+            }
+            if (opts.verbose || opts.dry_run) && !opts.json {
+                println!("  Removing rendered file: {}", mapping.target.display());
+            }
+            symlink::remove_rendered(&mapping.target, opts.dry_run)
+        }
+    }
+}
+
+fn remove_symlink(mapping: &symlink::SymlinkMapping, opts: &UninstallOptions) -> Result<bool> {
     let was_removed = symlink::remove_symlink(&mapping.target, &mapping.source, opts.dry_run)?;
 
     if !was_removed {
@@ -245,20 +289,34 @@ fn copy_source_to_target(mapping: &symlink::SymlinkMapping, opts: &UninstallOpti
     symlink::copy_file(&mapping.source, &mapping.target, opts.dry_run)
 }
 
-fn print_uninstall_summary(package: &str, removed_count: usize, opts: &UninstallOptions) {
+fn print_uninstall_summary(
+    package: &str,
+    symlinks: usize,
+    renders: usize,
+    opts: &UninstallOptions,
+) {
     if opts.dry_run || opts.json {
         return;
     }
 
     if opts.copy_files_back {
-        println!(
-            "Successfully uninstalled {} ({} symlinks removed, files copied back)",
-            package, removed_count
-        );
+        if renders == 0 {
+            println!(
+                "Successfully uninstalled {} ({} symlinks removed, files copied back)",
+                package, symlinks
+            );
+        } else {
+            println!(
+                "Successfully uninstalled {} ({} symlinks removed, files copied back, {} rendered files removed)",
+                package, symlinks, renders
+            );
+        }
+    } else if renders == 0 {
+        println!("Successfully removed {} symlinks for {}", symlinks, package);
     } else {
         println!(
-            "Successfully removed {} symlinks for {}",
-            removed_count, package
+            "Successfully removed {} symlinks and {} rendered files for {}",
+            symlinks, renders, package
         );
     }
 }

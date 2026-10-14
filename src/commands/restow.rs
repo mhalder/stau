@@ -21,8 +21,14 @@ pub fn restow_package(
         verbose: run.verbose,
         json: run.json,
     };
-    let uninstall =
-        uninstall_package_internal(config, package, run.target.clone(), opts, &run.script);
+    let uninstall = uninstall_package_internal(
+        config,
+        package,
+        run.target.clone(),
+        opts,
+        &run.script,
+        &run.data,
+    );
 
     // A hard uninstall failure aborts the restow, as before; a teardown failure
     // only carries its flag forward into the install.

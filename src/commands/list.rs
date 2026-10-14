@@ -12,7 +12,12 @@ use super::status::{FileState, compute_file_state_lenient};
 /// `conflict`, `hook`) and, only when it adds information, a note column with
 /// link counts, available hooks, and broken links. `long` prints the link count
 /// for every row instead of only the ones needing attention.
-pub fn list_packages(config: &Config, target: Option<PathBuf>, long: bool) -> Result<()> {
+pub fn list_packages(
+    config: &Config,
+    target: Option<PathBuf>,
+    long: bool,
+    data: &serde_json::Value,
+) -> Result<()> {
     let target_dir = config.get_target(target);
     let packages = package::list_packages(&config.stau_dir)?;
 
@@ -26,7 +31,7 @@ pub fn list_packages(config: &Config, target: Option<PathBuf>, long: bool) -> Re
         .map(|pkg| {
             (
                 pkg.as_str(),
-                PackageStatus::collect(config, pkg, &target_dir).map_err(|e| e.to_string()),
+                PackageStatus::collect(config, pkg, &target_dir, data).map_err(|e| e.to_string()),
             )
         })
         .collect();
@@ -79,25 +84,33 @@ struct PackageStatus {
     installed: usize,
     total: usize,
     broken: usize,
+    drift: usize,
     has_setup: bool,
     has_teardown: bool,
 }
 
 impl PackageStatus {
-    fn collect(config: &Config, pkg: &str, target_dir: &Path) -> Result<Self> {
+    fn collect(
+        config: &Config,
+        pkg: &str,
+        target_dir: &Path,
+        data: &serde_json::Value,
+    ) -> Result<Self> {
         let package_dir = config.get_package_dir(pkg);
-        let mappings = package::discover_package_files(&package_dir, target_dir)?;
+        let mappings = package::discover_package_files(&package_dir, target_dir, data)?;
         let broken = package::discover_broken_symlinks(&package_dir, target_dir)?;
         let broken_set: HashSet<PathBuf> = broken.iter().cloned().collect();
 
         let mut installed = 0;
         let mut conflict = 0;
+        let mut drift = 0;
         let mut broken_in_mappings = 0;
         for mapping in &mappings {
             match compute_file_state_lenient(mapping, &broken_set) {
                 FileState::Installed => installed += 1,
                 FileState::Conflict => conflict += 1,
                 FileState::Broken => broken_in_mappings += 1,
+                FileState::Drift => drift += 1,
                 FileState::NotInstalled | FileState::Restored => {}
             }
         }
@@ -132,6 +145,7 @@ impl PackageStatus {
             installed,
             total,
             broken: broken_in_mappings + stale_broken,
+            drift,
             has_setup,
             has_teardown,
         })
@@ -147,6 +161,10 @@ impl PackageStatus {
             }
             "missing" if self.total > 0 => parts.push(format!("0/{} links", self.total)),
             _ => {}
+        }
+
+        if self.drift > 0 {
+            parts.push(format!("{} drift", self.drift));
         }
 
         // Hooks are stau's differentiator, but most packages have them, so they

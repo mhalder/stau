@@ -2,8 +2,10 @@ mod adopt;
 mod batch;
 mod clean;
 mod completion;
+mod data;
 mod install;
 mod list;
+mod render;
 mod restow;
 mod status;
 mod uninstall;
@@ -16,6 +18,7 @@ use crate::config::Config;
 use crate::error::{self, Result};
 use crate::options::RunOptions;
 use crate::script::ScriptOptions;
+use crate::template;
 
 /// Validates the package names and runs the command.
 pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool) -> Result<()> {
@@ -28,9 +31,10 @@ pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool
             no_setup,
             json,
             script,
+            data,
         } => {
             let packages = resolve_packages(config, package, all, profile)?;
-            let mut script = script_options(&script)?;
+            let mut script = script_options(&script, &data.set)?;
             script.json = json;
             let run = RunOptions {
                 target,
@@ -38,6 +42,7 @@ pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool
                 dry_run,
                 verbose,
                 script,
+                data: template::build_data(&config.stau_dir, &data.set)?,
             };
             install::install_packages(config, &packages, no_setup, &run)
         }
@@ -49,9 +54,10 @@ pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool
             no_teardown,
             json,
             script,
+            data,
         } => {
             let packages = resolve_packages(config, package, all, profile)?;
-            let mut script = script_options(&script)?;
+            let mut script = script_options(&script, &data.set)?;
             script.json = json;
             let run = RunOptions {
                 target,
@@ -59,6 +65,7 @@ pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool
                 dry_run,
                 verbose,
                 script,
+                data: template::build_data(&config.stau_dir, &data.set)?,
             };
             uninstall::uninstall_packages(config, &packages, no_teardown, &run)
         }
@@ -71,9 +78,10 @@ pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool
             no_teardown,
             json,
             script,
+            data,
         } => {
             let packages = resolve_packages(config, package, all, profile)?;
-            let mut script = script_options(&script)?;
+            let mut script = script_options(&script, &data.set)?;
             script.json = json;
             let run = RunOptions {
                 target,
@@ -81,6 +89,7 @@ pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool
                 dry_run,
                 verbose,
                 script,
+                data: template::build_data(&config.stau_dir, &data.set)?,
             };
             restow::restow_packages(config, &packages, no_setup, no_teardown, &run)
         }
@@ -88,22 +97,47 @@ pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool
             package,
             files,
             target,
+            template,
+            data,
         } => {
             Config::validate_package_name(&package)?;
-            adopt::adopt_files(config, &package, &files, target, dry_run, verbose)
+            let data = template::build_data(&config.stau_dir, &data.set)?;
+            adopt::adopt_files(
+                config,
+                &package,
+                &files,
+                target,
+                dry_run,
+                verbose,
+                adopt::AdoptOptions {
+                    template,
+                    data: &data,
+                },
+            )
         }
-        Commands::List { target, long } => list::list_packages(config, target, long),
+        Commands::List { target, long } => {
+            let data = template::build_data(&config.stau_dir, &[])?;
+            list::list_packages(config, target, long, &data)
+        }
         Commands::Status {
             package,
             target,
             json,
-        } => status::run_status(config, package, target, json),
+            data,
+        } => {
+            let data = template::build_data(&config.stau_dir, &data.set)?;
+            status::run_status(config, package, target, json, &data)
+        }
         Commands::Verify {
             package,
             expect,
             target,
             json,
-        } => verify::run_verify(config, &package, expect, target, json),
+            data,
+        } => {
+            let data = template::build_data(&config.stau_dir, &data.set)?;
+            verify::run_verify(config, &package, expect, target, json, &data)
+        }
         Commands::Clean {
             package,
             target,
@@ -118,14 +152,23 @@ pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool
             print_completion(shell, &mut std::io::stdout());
             Ok(())
         }
+        Commands::Data {
+            json,
+            data,
+            command,
+        } => data::run_data(config, &data.set, json, dry_run, command),
+        Commands::Render { file, data } => {
+            let data = template::build_data(&config.stau_dir, &data.set)?;
+            render::run_render(config, &file, &data)
+        }
     }
 }
 
-/// Turns the parsed `--set`, `--non-interactive`, and `--script-timeout` flags
-/// into the options passed to every hook script.
-fn script_options(args: &ScriptArgs) -> Result<ScriptOptions> {
-    let mut env = Vec::with_capacity(args.set.len());
-    for pair in &args.set {
+/// Turns the parsed `--non-interactive` and `--script-timeout` flags (and the
+/// raw `--set` pairs) into the options passed to every hook script.
+fn script_options(args: &ScriptArgs, sets: &[String]) -> Result<ScriptOptions> {
+    let mut env = Vec::with_capacity(sets.len());
+    for pair in sets {
         let Some((key, value)) = pair.split_once('=') else {
             return Err(error::StauError::InvalidArguments(format!(
                 "--set expects KEY=VALUE, got {pair:?}"

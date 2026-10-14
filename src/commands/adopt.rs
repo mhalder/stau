@@ -1,13 +1,25 @@
 use crate::config::Config;
 use crate::error::{self, Result, map_io_error};
 use crate::symlink;
+use crate::template;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// Options for an adopt run that go beyond the shared target/dry-run/verbose.
+pub struct AdoptOptions<'a> {
+    /// Store `<rel>.tmpl` and render it back to the target.
+    pub template: bool,
+    /// The merged template data used when rendering an adopted template.
+    pub data: &'a serde_json::Value,
+}
 
 /// Adopts existing files into a package by moving them to the package directory and creating symlinks.
 ///
 /// Every file is checked before any is moved, so a conflict does not leave the
-/// package partially adopted.
+/// package partially adopted. With `options.template`, the destination inside
+/// the package becomes `<rel>.tmpl`, and after moving the file the original
+/// target is written as a rendered regular file from that template using
+/// `options.data`.
 pub fn adopt_files(
     config: &Config,
     package: &str,
@@ -15,6 +27,7 @@ pub fn adopt_files(
     target: Option<PathBuf>,
     dry_run: bool,
     verbose: bool,
+    options: AdoptOptions<'_>,
 ) -> Result<()> {
     let target_dir = config.get_target(target);
     let package_dir = config.get_package_dir(package);
@@ -27,7 +40,8 @@ pub fn adopt_files(
 
     let mut adoptions: Vec<(PathBuf, PathBuf)> = Vec::new();
     for file_path in files {
-        if let Some(adoption) = adopt_destination(file_path, &target_dir, &package_dir)?
+        if let Some(adoption) =
+            adopt_destination(file_path, &target_dir, &package_dir, options.template)?
             && !adoptions.iter().any(|(_, dest)| *dest == adoption.1)
         {
             adoptions.push(adoption);
@@ -47,7 +61,7 @@ pub fn adopt_files(
         }
 
         if !dry_run {
-            move_file_into_package(file_path, dest)?;
+            move_file_into_package(file_path, dest, options.template, options.data)?;
         }
     }
 
@@ -86,11 +100,13 @@ fn ensure_package_dir(package_dir: &Path, dry_run: bool, verbose: bool) -> Resul
 /// Resolves where a file will be adopted to, returning `(absolute file path, destination)`.
 ///
 /// Relative paths are resolved against the current directory. Missing files, files outside
-/// the target directory, directories, and symlinks are skipped with a warning.
+/// the target directory, directories, and symlinks are skipped with a warning. With
+/// `template`, the destination gets a `.tmpl` suffix.
 fn adopt_destination(
     file_path: &Path,
     target_dir: &Path,
     package_dir: &Path,
+    template: bool,
 ) -> Result<Option<(PathBuf, PathBuf)>> {
     let file_path = std::path::absolute(file_path).map_err(error::StauError::Io)?;
     let target_dir = std::path::absolute(target_dir).map_err(error::StauError::Io)?;
@@ -125,7 +141,13 @@ fn adopt_destination(
         return Ok(None);
     };
 
-    let dest = package_dir.join(rel_path);
+    let dest = if template {
+        let mut os = rel_path.as_os_str().to_os_string();
+        os.push(".tmpl");
+        package_dir.join(PathBuf::from(os))
+    } else {
+        package_dir.join(rel_path)
+    };
     if dest.symlink_metadata().is_ok() {
         return Err(error::StauError::ConflictingFile(dest));
     }
@@ -133,7 +155,18 @@ fn adopt_destination(
     Ok(Some((file_path, dest)))
 }
 
-fn move_file_into_package(file_path: &Path, dest: &Path) -> Result<()> {
+fn move_file_into_package(
+    file_path: &Path,
+    dest: &Path,
+    template: bool,
+    data: &serde_json::Value,
+) -> Result<()> {
     symlink::move_file(file_path, dest)?;
-    symlink::create_symlink(dest, file_path, false)
+    if template {
+        let content = template::render(dest, data)?;
+        symlink::write_rendered(dest, file_path, &content, false)?;
+    } else {
+        symlink::create_symlink(dest, file_path, false)?;
+    }
+    Ok(())
 }

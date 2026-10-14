@@ -47,6 +47,7 @@ pub fn run_verify(
     expect: Expect,
     target: Option<PathBuf>,
     json: bool,
+    data: &serde_json::Value,
 ) -> Result<()> {
     let target_dir = config.get_target(target);
     let expected = expect.expected_state();
@@ -60,7 +61,7 @@ pub fn run_verify(
         }
 
         let package_dir = config.get_package_dir(package);
-        let mappings = package::discover_package_files(&package_dir, &target_dir)?;
+        let mappings = package::discover_package_files(&package_dir, &target_dir, data)?;
         let broken = package::discover_broken_symlinks(&package_dir, &target_dir)?;
         let broken_set: HashSet<PathBuf> = broken.iter().cloned().collect();
 

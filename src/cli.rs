@@ -21,13 +21,21 @@ pub struct Cli {
     pub dry_run: bool,
 }
 
+/// The shared `--set KEY=VALUE` flag.
+///
+/// Templates get the dot-nested interpretation (`--set host.pgx=1` makes
+/// `host.pgx`); hook scripts receive each raw pair verbatim as an environment
+/// variable.
+#[derive(clap::Args, Clone, Debug, Default)]
+pub struct DataArgs {
+    /// Set a template variable or hook-script environment variable (repeatable)
+    #[arg(long, value_name = "KEY=VALUE")]
+    pub set: Vec<String>,
+}
+
 /// Options controlling how setup and teardown scripts run.
 #[derive(clap::Args, Clone, Debug, Default)]
 pub struct ScriptArgs {
-    /// Set an environment variable for hook scripts (repeatable)
-    #[arg(long, value_name = "KEY=VALUE")]
-    pub set: Vec<String>,
-
     /// Run hook scripts with stdin connected to /dev/null instead of the terminal
     #[arg(long)]
     pub non_interactive: bool,
@@ -42,6 +50,18 @@ pub struct ScriptArgs {
 pub enum Expect {
     Installed,
     Uninstalled,
+}
+
+/// Subcommands of `stau data`.
+#[derive(Subcommand)]
+pub enum DataCommand {
+    /// Upsert a dotted key into ~/.config/stau/machine.toml
+    Set {
+        /// Dotted key to set (e.g. host.pgx)
+        key: String,
+        /// Value; typed as a TOML literal when it parses, otherwise a string
+        value: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -74,6 +94,9 @@ pub enum Commands {
 
         #[command(flatten)]
         script: ScriptArgs,
+
+        #[command(flatten)]
+        data: DataArgs,
     },
 
     /// Uninstall packages (removes symlinks and restores original files from dotfiles repo)
@@ -104,6 +127,9 @@ pub enum Commands {
 
         #[command(flatten)]
         script: ScriptArgs,
+
+        #[command(flatten)]
+        data: DataArgs,
     },
 
     /// Restow packages (uninstall and reinstall, without copying files back)
@@ -138,6 +164,9 @@ pub enum Commands {
 
         #[command(flatten)]
         script: ScriptArgs,
+
+        #[command(flatten)]
+        data: DataArgs,
     },
 
     /// Adopt existing files into a package
@@ -153,6 +182,13 @@ pub enum Commands {
         /// Target directory (default: $HOME or $STAU_TARGET)
         #[arg(short, long, env = "STAU_TARGET", value_hint = ValueHint::DirPath)]
         target: Option<PathBuf>,
+
+        /// Adopt into a template: store `<rel>.tmpl` and render it back to the target
+        #[arg(long)]
+        template: bool,
+
+        #[command(flatten)]
+        data: DataArgs,
     },
 
     /// List all packages and their installation status
@@ -181,6 +217,9 @@ pub enum Commands {
         /// Print a machine-readable JSON status envelope
         #[arg(long)]
         json: bool,
+
+        #[command(flatten)]
+        data: DataArgs,
     },
 
     /// Verify that every file of every named package is in the expected state
@@ -201,6 +240,9 @@ pub enum Commands {
         /// Print mismatches as a machine-readable JSON object
         #[arg(long)]
         json: bool,
+
+        #[command(flatten)]
+        data: DataArgs,
     },
 
     /// Clean up broken symlinks for a package
@@ -223,5 +265,28 @@ pub enum Commands {
         /// Shell to generate the completion script for
         #[arg(value_enum)]
         shell: Shell,
+    },
+
+    /// Show or edit the merged template data
+    Data {
+        /// Print machine-readable JSON instead of TOML
+        #[arg(long)]
+        json: bool,
+
+        #[command(flatten)]
+        data: DataArgs,
+
+        #[command(subcommand)]
+        command: Option<DataCommand>,
+    },
+
+    /// Render a template file to stdout
+    Render {
+        /// Template file to render (relative paths resolve against STAU_DIR)
+        #[arg(value_hint = ValueHint::FilePath)]
+        file: PathBuf,
+
+        #[command(flatten)]
+        data: DataArgs,
     },
 }

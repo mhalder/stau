@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::error::{self, Result};
-use crate::{package, symlink};
+use crate::package;
+use crate::symlink::{self, MappingKind};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -13,6 +14,7 @@ pub enum FileState {
     Conflict,
     Broken,
     Restored,
+    Drift,
 }
 
 impl FileState {
@@ -23,16 +25,19 @@ impl FileState {
             FileState::Conflict => "conflict",
             FileState::Broken => "broken",
             FileState::Restored => "restored",
+            FileState::Drift => "drift",
         }
     }
 }
 
 /// Computes the state of one file mapping against the target directory.
 ///
-/// A target that is a regular file whose contents equal the package source is
-/// `Restored` — stau's copy-back contract after uninstall. A read error on
-/// either file is returned as an I/O error (used by `verify`, which must fail
-/// on I/O).
+/// For a `Symlink` mapping, a target that is a regular file whose contents
+/// equal the package source is `Restored` — stau's copy-back contract after
+/// uninstall. For a `Render` mapping, a matching regular file is `Installed`, a
+/// differing regular file is `Drift`, and a symlink or directory is `Conflict`.
+/// A read error on either file is returned as an I/O error (used by `verify`,
+/// which must fail on I/O).
 pub fn compute_file_state(
     mapping: &symlink::SymlinkMapping,
     broken: &HashSet<PathBuf>,
@@ -54,26 +59,49 @@ fn compute_file_state_inner(
     broken: &HashSet<PathBuf>,
     lenient: bool,
 ) -> Result<FileState> {
-    if broken.contains(&mapping.target) {
-        return Ok(FileState::Broken);
-    }
+    match mapping.kind {
+        MappingKind::Symlink => {
+            if broken.contains(&mapping.target) {
+                return Ok(FileState::Broken);
+            }
 
-    if symlink::is_stau_symlink(&mapping.target, &mapping.source)? {
-        return Ok(FileState::Installed);
-    }
+            if symlink::is_stau_symlink(&mapping.target, &mapping.source)? {
+                return Ok(FileState::Installed);
+            }
 
-    match mapping.target.symlink_metadata() {
-        Ok(metadata) if metadata.is_symlink() => Ok(FileState::Conflict),
-        Ok(metadata) if metadata.is_file() => {
-            match symlink::same_contents(&mapping.source, &mapping.target) {
-                Ok(true) => Ok(FileState::Restored),
-                Ok(false) => Ok(FileState::Conflict),
-                Err(_) if lenient => Ok(FileState::Conflict),
-                Err(e) => Err(e),
+            match mapping.target.symlink_metadata() {
+                Ok(metadata) if metadata.is_symlink() => Ok(FileState::Conflict),
+                Ok(metadata) if metadata.is_file() => {
+                    match symlink::same_contents(&mapping.source, &mapping.target) {
+                        Ok(true) => Ok(FileState::Restored),
+                        Ok(false) => Ok(FileState::Conflict),
+                        Err(_) if lenient => Ok(FileState::Conflict),
+                        Err(e) => Err(e),
+                    }
+                }
+                Ok(_) => Ok(FileState::Conflict),
+                Err(_) => Ok(FileState::NotInstalled),
             }
         }
-        Ok(_) => Ok(FileState::Conflict),
-        Err(_) => Ok(FileState::NotInstalled),
+        MappingKind::Render => {
+            let content = mapping
+                .rendered
+                .as_deref()
+                .expect("render mapping carries content");
+            match mapping.target.symlink_metadata() {
+                Ok(metadata) if metadata.is_symlink() => Ok(FileState::Conflict),
+                Ok(metadata) if metadata.is_file() => {
+                    match symlink::same_bytes(&mapping.target, content) {
+                        Ok(true) => Ok(FileState::Installed),
+                        Ok(false) => Ok(FileState::Drift),
+                        Err(_) if lenient => Ok(FileState::Conflict),
+                        Err(e) => Err(e),
+                    }
+                }
+                Ok(_) => Ok(FileState::Conflict),
+                Err(_) => Ok(FileState::NotInstalled),
+            }
+        }
     }
 }
 
@@ -90,6 +118,7 @@ struct StatusCounts {
     not_installed: usize,
     conflict: usize,
     broken: usize,
+    drift: usize,
 }
 
 #[derive(Serialize)]
@@ -116,20 +145,26 @@ pub fn run_status(
     packages: Vec<String>,
     target: Option<PathBuf>,
     json: bool,
+    data: &serde_json::Value,
 ) -> Result<()> {
     if json {
-        show_status_json(config, &packages, target)
+        show_status_json(config, &packages, target, data)
     } else {
         for package in &packages {
             Config::validate_package_name(package)?;
-            show_status(config, package, target.clone())?;
+            show_status(config, package, target.clone(), data)?;
         }
         Ok(())
     }
 }
 
 /// Shows detailed status for a specific package including symlink states and script availability.
-pub fn show_status(config: &Config, package: &str, target: Option<PathBuf>) -> Result<()> {
+pub fn show_status(
+    config: &Config,
+    package: &str,
+    target: Option<PathBuf>,
+    data: &serde_json::Value,
+) -> Result<()> {
     let target_dir = config.get_target(target);
     let package_dir = config.get_package_dir(package);
 
@@ -155,7 +190,7 @@ pub fn show_status(config: &Config, package: &str, target: Option<PathBuf>) -> R
     }
 
     // Get all mappings
-    let mappings = package::discover_package_files(&package_dir, &target_dir)?;
+    let mappings = package::discover_package_files(&package_dir, &target_dir, data)?;
     let broken = package::discover_broken_symlinks(&package_dir, &target_dir)?;
     let broken_set: HashSet<PathBuf> = broken.iter().cloned().collect();
 
@@ -174,9 +209,11 @@ pub fn show_status(config: &Config, package: &str, target: Option<PathBuf>) -> R
 
     let mut installed = 0;
     let mut not_installed = 0;
+    let mut drift = 0;
 
     for mapping in &mappings {
-        let (label, count_not_installed) = match compute_file_state_lenient(mapping, &broken_set) {
+        let state = compute_file_state_lenient(mapping, &broken_set);
+        let (label, count_not_installed) = match state {
             FileState::Installed => {
                 installed += 1;
                 ("[installed]", false)
@@ -185,6 +222,10 @@ pub fn show_status(config: &Config, package: &str, target: Option<PathBuf>) -> R
             FileState::Conflict => ("[conflict]", true),
             FileState::Broken => ("[BROKEN]", false),
             FileState::Restored => ("[restored]", true),
+            FileState::Drift => {
+                drift += 1;
+                ("[drift]", false)
+            }
         };
         if count_not_installed {
             not_installed += 1;
@@ -201,13 +242,16 @@ pub fn show_status(config: &Config, package: &str, target: Option<PathBuf>) -> R
         println!("  {:<20} {}", "[BROKEN]", path.display());
     }
 
-    println!();
-    println!(
-        "Summary: {} installed, {} not installed, {} broken",
-        installed,
-        not_installed,
-        broken.len()
+    let mut summary = format!(
+        "Summary: {} installed, {} not installed",
+        installed, not_installed
     );
+    if drift > 0 {
+        summary.push_str(&format!(", {} drift", drift));
+    }
+    summary.push_str(&format!(", {} broken", broken.len()));
+    println!();
+    println!("{summary}");
 
     Ok(())
 }
@@ -218,6 +262,7 @@ pub fn show_status_json(
     config: &Config,
     packages: &[String],
     target: Option<PathBuf>,
+    data: &serde_json::Value,
 ) -> Result<()> {
     let target_dir = config.get_target(target);
     let names: Vec<String> = if packages.is_empty() {
@@ -231,7 +276,7 @@ pub fn show_status_json(
 
     let mut result = Vec::with_capacity(names.len());
     for name in &names {
-        result.push(collect_package_status(config, name, &target_dir)?);
+        result.push(collect_package_status(config, name, &target_dir, data)?);
     }
 
     let envelope = StatusEnvelope {
@@ -252,6 +297,7 @@ fn collect_package_status(
     config: &Config,
     package: &str,
     target_dir: &Path,
+    data: &serde_json::Value,
 ) -> Result<StatusPackage> {
     let package_dir = config.get_package_dir(package);
 
@@ -259,7 +305,7 @@ fn collect_package_status(
         return Err(error::StauError::PackageNotFound(package.to_string()));
     }
 
-    let mappings = package::discover_package_files(&package_dir, target_dir)?;
+    let mappings = package::discover_package_files(&package_dir, target_dir, data)?;
     let broken = package::discover_broken_symlinks(&package_dir, target_dir)?;
     let broken_set: HashSet<PathBuf> = broken.iter().cloned().collect();
 
@@ -269,6 +315,7 @@ fn collect_package_status(
         not_installed: 0,
         conflict: 0,
         broken: 0,
+        drift: 0,
     };
 
     for mapping in &mappings {
@@ -278,6 +325,7 @@ fn collect_package_status(
             FileState::NotInstalled | FileState::Restored => counts.not_installed += 1,
             FileState::Conflict => counts.conflict += 1,
             FileState::Broken => counts.broken += 1,
+            FileState::Drift => counts.drift += 1,
         }
         files.push(StatusFile {
             rel: rel_to_target(&mapping.target, target_dir),
@@ -332,4 +380,73 @@ pub fn rel_to_target(path: &Path, target_dir: &Path) -> String {
     path.strip_prefix(target_dir)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| path.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn render_mapping(target: std::path::PathBuf, content: &str) -> symlink::SymlinkMapping {
+        symlink::SymlinkMapping::render(
+            std::path::PathBuf::from("/pkg/src.tmpl"),
+            target,
+            content.to_string(),
+        )
+    }
+
+    #[test]
+    fn test_render_installed_when_matching() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("file");
+        fs::write(&target, "hello").unwrap();
+
+        let mapping = render_mapping(target, "hello");
+        assert_eq!(
+            compute_file_state(&mapping, &HashSet::new()).unwrap(),
+            FileState::Installed
+        );
+    }
+
+    #[test]
+    fn test_render_drift_when_modified() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("file");
+        fs::write(&target, "modified").unwrap();
+
+        let mapping = render_mapping(target, "hello");
+        assert_eq!(
+            compute_file_state(&mapping, &HashSet::new()).unwrap(),
+            FileState::Drift
+        );
+    }
+
+    #[test]
+    fn test_render_not_installed_when_absent() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("missing");
+
+        let mapping = render_mapping(target, "hello");
+        assert_eq!(
+            compute_file_state(&mapping, &HashSet::new()).unwrap(),
+            FileState::NotInstalled
+        );
+    }
+
+    #[test]
+    fn test_render_conflict_when_symlink() {
+        use std::os::unix::fs as unix_fs;
+
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("file");
+        unix_fs::symlink("/somewhere", &target).unwrap();
+
+        let mapping = render_mapping(target, "hello");
+        assert_eq!(
+            compute_file_state(&mapping, &HashSet::new()).unwrap(),
+            FileState::Conflict
+        );
+    }
 }
