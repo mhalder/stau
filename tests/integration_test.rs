@@ -3911,3 +3911,106 @@ fn test_status_and_verify_report_template_error() {
     let output = run(&["verify", "demo"]);
     assert_eq!(output.status.code(), Some(5), "verify: {output:?}");
 }
+
+#[test]
+fn test_adopt_template_literal_syntax_fails_without_moving() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir(&xdg).unwrap();
+
+    let workflow = target_dir.join(".workflow");
+    fs::write(&workflow, "on: push\nstep: ${{ github.event }}\n").unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .args([
+            "adopt",
+            "pkg",
+            workflow.to_str().unwrap(),
+            "--target",
+            target_dir.to_str().unwrap(),
+            "--template",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(6), "output: {output:?}");
+    assert!(workflow.is_file(), "original target must be untouched");
+    assert_eq!(
+        fs::read_to_string(&workflow).unwrap(),
+        "on: push\nstep: ${{ github.event }}\n"
+    );
+    assert!(
+        !stau_dir.join("pkg").exists(),
+        "nothing must be moved into the package"
+    );
+}
+
+#[test]
+fn test_install_file_dir_collision_writes_nothing() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir_all(stau_dir.join("pkg/foo")).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir(&xdg).unwrap();
+    fs::write(stau_dir.join("pkg/foo.tmpl"), "x\n").unwrap();
+    fs::write(stau_dir.join("pkg/foo/bar"), "y\n").unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .args(["install", "pkg"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1), "output: {output:?}");
+    assert!(!target_dir.join("foo").exists(), "no partial render");
+    assert!(!target_dir.join("foo/bar").exists());
+}
+
+#[test]
+fn test_uninstall_removes_unreadable_render_target() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir_all(stau_dir.join("pkg/.config")).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir_all(xdg.join("stau")).unwrap();
+    fs::write(xdg.join("stau/machine.toml"), "[user]\nn = \"alice\"\n").unwrap();
+    fs::write(stau_dir.join("pkg/.config/c.tmpl"), "x = {{ user.n }}\n").unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    assert!(run(&["install", "pkg"]).status.success());
+    let target = target_dir.join(".config/c");
+    assert!(target.is_file());
+
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read(&target).is_ok() {
+        // Running as root, where permissions are not enforced.
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
+        return;
+    }
+
+    let output = run(&["uninstall", "pkg"]);
+    assert!(output.status.success(), "uninstall: {output:?}");
+    assert!(!target.exists(), "unreadable target must still be removed");
+}
