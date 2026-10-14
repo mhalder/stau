@@ -4042,6 +4042,64 @@ fn test_uninstall_and_restow_json_omit_rendered_refreshed() {
 }
 
 #[test]
+fn test_install_json_reports_rendered_refreshed_on_failure() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir(&xdg).unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    // Case A: an early conflict (a directory at the render target) reports 0.
+    fs::create_dir_all(stau_dir.join("conflict")).unwrap();
+    fs::write(stau_dir.join("conflict/foo.tmpl"), "x\n").unwrap();
+    fs::create_dir(target_dir.join("foo")).unwrap();
+
+    let output = run(&["install", "conflict", "--refresh-rendered", "--json"]);
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid JSON");
+    let entry = &value["packages"][0];
+    assert_eq!(entry["error_kind"], "conflict");
+    assert_eq!(entry["exit_code"], 2);
+    assert_eq!(entry["rendered_refreshed"], 0);
+
+    // Case B: a setup failure after one refresh reports the partial count.
+    let pkg = stau_dir.join("setupfail");
+    fs::create_dir_all(&pkg).unwrap();
+    fs::write(pkg.join("conf.tmpl"), "fresh = true\n").unwrap();
+    create_script(&pkg.join("setup.sh"), "#!/bin/bash\nexit 1\n");
+
+    assert!(
+        run(&["install", "setupfail", "--no-setup"])
+            .status
+            .success()
+    );
+    let target = target_dir.join("conf");
+    assert_eq!(fs::read_to_string(&target).unwrap(), "fresh = true\n");
+
+    fs::write(&target, "drifted\n").unwrap();
+    let output = run(&["install", "setupfail", "--refresh-rendered", "--json"]);
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid JSON");
+    let entry = &value["packages"][0];
+    assert_eq!(entry["rendered_refreshed"], 1);
+    assert_eq!(entry["exit_code"], 4);
+    // The drift was refreshed before the setup failure.
+    assert_eq!(fs::read_to_string(&target).unwrap(), "fresh = true\n");
+}
+
+#[test]
 fn test_data_command_toml_and_json() {
     let temp_dir = TempDir::new().unwrap();
     let stau_dir = temp_dir.path().join("dotfiles");
