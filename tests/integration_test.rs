@@ -3596,3 +3596,196 @@ fn test_closed_pipe_exits_by_signal_without_panicking() {
     assert_eq!(output.status.code(), None, "stderr: {stderr}");
     assert_eq!(output.status.signal(), Some(13), "expected SIGPIPE");
 }
+
+// =============================================================================
+// Template rendering tests
+// =============================================================================
+
+#[test]
+fn test_template_install_status_drift_restow_uninstall() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir(&xdg).unwrap();
+
+    let pkg_dir = stau_dir.join("git");
+    fs::create_dir_all(pkg_dir.join(".local/bin")).unwrap();
+    fs::write(
+        pkg_dir.join(".gitconfig.tmpl"),
+        "email = {{ user.email }}\n",
+    )
+    .unwrap();
+    let hello_tmpl = pkg_dir.join(".local/bin/hello.tmpl");
+    fs::write(&hello_tmpl, "#!/bin/sh\necho {{ stau.hostname }}\n").unwrap();
+    let mut perms = fs::metadata(&hello_tmpl).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&hello_tmpl, perms).unwrap();
+
+    // `--set` is ephemeral, so every command in the workflow re-supplies it
+    // (machine-specific values belong in machine.toml; --set overrides them).
+    let run = |args: &[&str]| {
+        let mut full = args.to_vec();
+        full.extend_from_slice(&["--set", "user.email=me@example.com"]);
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .args(&full)
+            .output()
+            .unwrap()
+    };
+
+    // Install, rendering .gitconfig from --set and preserving the exec bit.
+    let output = run(&["install", "git"]);
+    assert!(output.status.success(), "install failed: {output:?}");
+
+    let gitconfig = target_dir.join(".gitconfig");
+    let hello = target_dir.join(".local/bin/hello");
+    assert!(
+        gitconfig.is_file(),
+        "rendered target must be a regular file"
+    );
+    assert!(!gitconfig.is_symlink());
+    assert_eq!(
+        fs::read_to_string(&gitconfig).unwrap(),
+        "email = me@example.com\n"
+    );
+    let mode = fs::metadata(&hello).unwrap().permissions().mode();
+    assert_eq!(mode & 0o111, 0o111, "exec bit must be preserved");
+
+    // status --json shows installed with no drift.
+    let output = run(&["status", "--json", "git"]);
+    assert!(output.status.success(), "status --json failed: {output:?}");
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid JSON");
+    assert_eq!(value["packages"][0]["state"], "installed");
+    assert_eq!(value["packages"][0]["files"][0]["state"], "installed");
+    assert_eq!(value["packages"][0]["counts"]["drift"], 0);
+
+    // Editing the target makes it drift.
+    fs::write(&gitconfig, "email = changed\n").unwrap();
+    let output = run(&["status", "git"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[drift]"), "status stdout: {stdout}");
+
+    let output = run(&["status", "--json", "git"]);
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid JSON");
+    assert_eq!(value["packages"][0]["counts"]["drift"], 1);
+    assert_eq!(value["packages"][0]["files"][0]["state"], "drift");
+
+    // restow re-renders the changed template.
+    let output = run(&["restow", "git"]);
+    assert!(output.status.success(), "restow failed: {output:?}");
+    assert_eq!(
+        fs::read_to_string(&gitconfig).unwrap(),
+        "email = me@example.com\n"
+    );
+
+    // Uninstall discards local edits with a warning and never copies the
+    // template back: the rendered target is simply removed.
+    fs::write(&gitconfig, "locally modified\n").unwrap();
+    let output = run(&["uninstall", "git"]);
+    assert!(output.status.success(), "uninstall failed: {output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("discarding local modifications"),
+        "uninstall stderr: {stderr}"
+    );
+    assert!(!gitconfig.exists(), "rendered target must be removed");
+    assert!(!hello.exists());
+    assert!(
+        pkg_dir.join(".gitconfig.tmpl").is_file(),
+        "the template source is untouched"
+    );
+}
+
+#[test]
+fn test_data_command_toml_and_json() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&xdg).unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    let out = run(&["data", "--set", "host.pgx=10.0.0.1"]);
+    assert!(out.status.success(), "data failed: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("[stau]") || stdout.contains("stau"),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("10.0.0.1"), "stdout: {stdout}");
+
+    let out = run(&["data", "--json", "--set", "host.pgx=10.0.0.1"]);
+    assert!(out.status.success(), "data --json failed: {out:?}");
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("valid JSON");
+    assert_eq!(value["host"]["pgx"], "10.0.0.1");
+    assert!(value["stau"].is_object());
+}
+
+#[test]
+fn test_data_set_writes_machine_toml() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir(&stau_dir).unwrap();
+
+    let machine = xdg.join("stau/machine.toml");
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .args(["data", "set", "host.pgx", "10.0.0.1"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "data set failed: {output:?}");
+    let contents = fs::read_to_string(&machine).unwrap();
+    assert!(contents.contains("pgx"), "machine.toml: {contents}");
+
+    // A second call with a TOML literal types it as an integer.
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .args(["data", "set", "host.port", "22"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "data set failed: {output:?}");
+    let contents = fs::read_to_string(&machine).unwrap();
+    assert!(contents.contains("22"), "machine.toml: {contents}");
+}
+
+#[test]
+fn test_render_command() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&xdg).unwrap();
+    fs::write(stau_dir.join("greet.tmpl"), "hi {{ user.name }}").unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .args(["render", "greet.tmpl", "--set", "user.name=alice"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "render failed: {output:?}");
+    // Render prints the exact result with no added newline.
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "hi alice");
+}
