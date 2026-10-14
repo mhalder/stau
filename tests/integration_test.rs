@@ -3789,3 +3789,125 @@ fn test_render_command() {
     // Render prints the exact result with no added newline.
     assert_eq!(String::from_utf8_lossy(&output.stdout), "hi alice");
 }
+
+#[test]
+fn test_uninstall_removes_target_when_template_breaks() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir_all(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir(&xdg).unwrap();
+
+    let conf = stau_dir.join("demo/.config/app/conf.tmpl");
+    fs::create_dir_all(conf.parent().unwrap()).unwrap();
+    fs::write(&conf, "x = {{ user.name }}\n").unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    assert!(
+        run(&["install", "demo", "--set", "user.name=Alice"])
+            .status
+            .success()
+    );
+    let target = target_dir.join(".config/app/conf");
+    assert!(target.is_file());
+
+    // Break the template after install: uninstall must still remove the target.
+    fs::write(&conf, "x = {{ missing.var }}\n").unwrap();
+
+    let output = run(&["uninstall", "demo"]);
+    assert!(output.status.success(), "uninstall: {output:?}");
+    assert!(!target.exists(), "rendered target must be removed");
+}
+
+#[test]
+fn test_restow_with_broken_template_fails_without_removing() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir_all(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir(&xdg).unwrap();
+
+    let conf = stau_dir.join("demo/.config/app/conf.tmpl");
+    fs::create_dir_all(conf.parent().unwrap()).unwrap();
+    fs::write(&conf, "x = {{ user.name }}\n").unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    assert!(
+        run(&["install", "demo", "--set", "user.name=Alice"])
+            .status
+            .success()
+    );
+    let target = target_dir.join(".config/app/conf");
+    let original = fs::read_to_string(&target).unwrap();
+
+    // A broken template must fail the restow before anything is removed.
+    fs::write(&conf, "x = {{ missing.var }}\n").unwrap();
+    let output = run(&["restow", "demo"]);
+    assert_eq!(output.status.code(), Some(6), "output: {output:?}");
+    assert!(target.is_file(), "target must not be removed");
+    assert_eq!(fs::read_to_string(&target).unwrap(), original);
+}
+
+#[test]
+fn test_status_and_verify_report_template_error() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir_all(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir(&xdg).unwrap();
+
+    let conf = stau_dir.join("demo/.config/app/conf.tmpl");
+    fs::create_dir_all(conf.parent().unwrap()).unwrap();
+    fs::write(&conf, "x = {{ user.name }}\n").unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    assert!(
+        run(&["install", "demo", "--set", "user.name=Alice"])
+            .status
+            .success()
+    );
+    fs::write(&conf, "x = {{ missing.var }}\n").unwrap();
+
+    let output = run(&["status", "--json", "demo"]);
+    assert!(output.status.success(), "status --json: {output:?}");
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid JSON");
+    assert_eq!(value["packages"][0]["files"][0]["state"], "error");
+    assert_eq!(value["packages"][0]["counts"]["error"], 1);
+
+    let output = run(&["verify", "demo"]);
+    assert_eq!(output.status.code(), Some(5), "verify: {output:?}");
+}
