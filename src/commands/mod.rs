@@ -29,6 +29,7 @@ pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool
             profile,
             target,
             no_setup,
+            refresh_rendered,
             json,
             script,
             data,
@@ -44,7 +45,7 @@ pub fn dispatch(config: &Config, command: Commands, dry_run: bool, verbose: bool
                 script,
                 data: template::build_data(&config.stau_dir, &data.set)?,
             };
-            install::install_packages(config, &packages, no_setup, &run)
+            install::install_packages(config, &packages, no_setup, refresh_rendered, &run)
         }
         Commands::Uninstall {
             package,

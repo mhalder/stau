@@ -88,6 +88,10 @@ pub enum Commands {
         #[arg(long)]
         no_setup: bool,
 
+        /// Re-render rendered targets whose bytes have drifted from the current render
+        #[arg(long)]
+        refresh_rendered: bool,
+
         /// Print a machine-readable JSON summary instead of human text
         #[arg(long)]
         json: bool,

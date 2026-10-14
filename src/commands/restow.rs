@@ -53,13 +53,15 @@ pub fn restow_package(
         return PackageOutcome {
             error: Some(e),
             teardown_failed: uninstall.teardown_failed,
+            rendered_refreshed: None,
         };
     }
 
-    let install = install_package(config, package, no_setup, run);
+    let install = install_package(config, package, no_setup, false, run);
     PackageOutcome {
         error: install.error,
         teardown_failed: uninstall.teardown_failed,
+        rendered_refreshed: None,
     }
 }
 

@@ -9,12 +9,16 @@ use crate::{package, script, symlink, template};
 ///
 /// If a setup script exists and `no_setup` is false, it will be executed after creating symlinks.
 ///
+/// With `refresh_rendered`, a rendered target whose bytes drifted from the
+/// current render is re-rendered in place instead of conflicting.
+///
 /// With `run.json`, stau's own human output is suppressed and the hook's stdout
 /// is redirected to stderr so a machine-readable summary can be printed by the caller.
 pub fn install_package(
     config: &Config,
     package: &str,
     no_setup: bool,
+    refresh_rendered: bool,
     run: &RunOptions,
 ) -> PackageOutcome {
     let target_dir = config.get_target(run.target.clone());
@@ -47,6 +51,8 @@ pub fn install_package(
         println!("Found {} files to link", mappings.len());
     }
 
+    let mut refreshed = 0usize;
+
     if mappings.is_empty() {
         if !run.json {
             println!("No files to link in package '{}'", package);
@@ -54,7 +60,7 @@ pub fn install_package(
     } else {
         // Check every target for conflicts before creating any link or file, so a
         // conflict does not leave the package partially installed
-        if let Err(e) = symlink::check_conflicts(&mappings) {
+        if let Err(e) = symlink::check_conflicts(&mappings, refresh_rendered) {
             return PackageOutcome::failed(e);
         }
 
@@ -80,8 +86,14 @@ pub fn install_package(
                         .rendered
                         .as_deref()
                         .expect("render mapping carries content");
+                    let refresh = refresh_rendered
+                        && symlink::rendered_differs(&mapping.target, content).unwrap_or(false);
                     if (run.verbose || run.dry_run) && !run.json {
-                        if symlink::rendered_is_current(&mapping.target, content).unwrap_or(false) {
+                        if refresh {
+                            println!("  {} (would refresh)", mapping.target.display());
+                        } else if symlink::rendered_is_current(&mapping.target, content)
+                            .unwrap_or(false)
+                        {
                             println!("  {} (up to date)", mapping.target.display());
                         } else {
                             println!(
@@ -91,13 +103,26 @@ pub fn install_package(
                             );
                         }
                     }
-                    if let Err(e) = symlink::write_rendered(
-                        &mapping.source,
-                        &mapping.target,
-                        content,
-                        run.dry_run,
-                    ) {
+                    let result = if refresh {
+                        symlink::refresh_rendered(
+                            &mapping.source,
+                            &mapping.target,
+                            content,
+                            run.dry_run,
+                        )
+                    } else {
+                        symlink::write_rendered(
+                            &mapping.source,
+                            &mapping.target,
+                            content,
+                            run.dry_run,
+                        )
+                    };
+                    if let Err(e) = result {
                         return PackageOutcome::failed(e);
+                    }
+                    if refresh {
+                        refreshed += 1;
                     }
                 }
             }
@@ -112,7 +137,7 @@ pub fn install_package(
                 .iter()
                 .filter(|m| m.kind == MappingKind::Render)
                 .count();
-            let message = match (symlinks, renders) {
+            let mut message = match (symlinks, renders) {
                 (_, 0) => format!(
                     "Successfully installed {} ({} symlinks created)",
                     package, symlinks
@@ -126,6 +151,9 @@ pub fn install_package(
                     package, s, r
                 ),
             };
+            if refreshed > 0 {
+                message.push_str(&format!(", {} refreshed", refreshed));
+            }
             println!("{message}");
         }
     }
@@ -153,7 +181,9 @@ pub fn install_package(
         }
     }
 
-    PackageOutcome::ok()
+    let mut outcome = PackageOutcome::ok();
+    outcome.rendered_refreshed = Some(refreshed);
+    outcome
 }
 
 /// Installs every package in `packages`, in the order given, continuing past
@@ -162,6 +192,7 @@ pub fn install_packages(
     config: &Config,
     packages: &[String],
     no_setup: bool,
+    refresh_rendered: bool,
     run: &RunOptions,
 ) -> error::Result<()> {
     run_for_packages(
@@ -169,6 +200,6 @@ pub fn install_packages(
         packages,
         run,
         &BatchLabels::new("Installing", "install", "installed", "Installed"),
-        |pkg| install_package(config, pkg, no_setup, run),
+        |pkg| install_package(config, pkg, no_setup, refresh_rendered, run),
     )
 }

@@ -130,20 +130,27 @@ fn normalize_lexically(path: &Path) -> PathBuf {
 ///
 /// This is the conflict pre-check used by `install` so a conflicting file does
 /// not leave the package partially installed. It reports the first conflict.
-/// For `Render` mappings this is a dry-run of [`write_rendered`].
-pub fn check_conflicts(mappings: &[SymlinkMapping]) -> Result<()> {
+/// For `Render` mappings this is a dry-run of [`write_rendered`], except that
+/// with `refresh_rendered` a regular-file target is skipped: drifted bytes are
+/// refreshed in place during apply instead of conflicting.
+pub fn check_conflicts(mappings: &[SymlinkMapping], refresh_rendered: bool) -> Result<()> {
     for mapping in mappings {
         match mapping.kind {
             MappingKind::Symlink => create_symlink(&mapping.source, &mapping.target, true)?,
-            MappingKind::Render => write_rendered(
-                &mapping.source,
-                &mapping.target,
-                mapping
-                    .rendered
-                    .as_deref()
-                    .expect("render mapping carries content"),
-                true,
-            )?,
+            MappingKind::Render => {
+                if refresh_rendered && is_regular_file(&mapping.target) {
+                    continue;
+                }
+                write_rendered(
+                    &mapping.source,
+                    &mapping.target,
+                    mapping
+                        .rendered
+                        .as_deref()
+                        .expect("render mapping carries content"),
+                    true,
+                )?;
+            }
         }
     }
     Ok(())
@@ -242,6 +249,12 @@ pub fn rendered_differs(target: &Path, content: &str) -> Result<bool> {
     }
 }
 
+/// Returns `true` when `target` is a regular file (not a symlink, directory, or
+/// special file, and not absent).
+fn is_regular_file(target: &Path) -> bool {
+    matches!(target.symlink_metadata(), Ok(metadata) if metadata.is_file())
+}
+
 /// Writes a rendered file at `target`, preserving the source's permission bits.
 ///
 /// If the target already exists as a regular file with bytes equal to `content`,
@@ -255,11 +268,44 @@ pub fn write_rendered(source: &Path, target: &Path, content: &str, dry_run: bool
     match target.symlink_metadata() {
         Ok(metadata) if metadata.is_file() => {
             if !same_bytes(target, content)? {
-                return Err(StauError::ConflictingFile(target.to_path_buf()));
+                return Err(StauError::RenderedDrift(target.to_path_buf()));
             }
             if dry_run {
                 return Ok(());
             }
+            return set_permissions_from_source(source, target);
+        }
+        Ok(_) => return Err(StauError::ConflictingFile(target.to_path_buf())),
+        Err(_) => {}
+    }
+
+    if dry_run {
+        return Ok(());
+    }
+
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            map_io_error(e, format!("Cannot create directory: {}", parent.display()))
+        })?;
+    }
+
+    write_atomic(target, content.as_bytes())?;
+    set_permissions_from_source(source, target)
+}
+
+/// Refreshes a drifted rendered file at `target` in place.
+///
+/// A regular-file target is overwritten atomically and its permission bits are
+/// copied from `source` (a no-op when `dry_run`). Any other kind of target
+/// (symlink, directory, special file) is a [`StauError::ConflictingFile`]; an
+/// absent target is created exactly as [`write_rendered`] does.
+pub fn refresh_rendered(source: &Path, target: &Path, content: &str, dry_run: bool) -> Result<()> {
+    match target.symlink_metadata() {
+        Ok(metadata) if metadata.is_file() => {
+            if dry_run {
+                return Ok(());
+            }
+            write_atomic(target, content.as_bytes())?;
             return set_permissions_from_source(source, target);
         }
         Ok(_) => return Err(StauError::ConflictingFile(target.to_path_buf())),
@@ -755,7 +801,7 @@ mod tests {
         fs::write(&target, "existing").unwrap();
 
         let result = write_rendered(&source, &target, "rendered", false);
-        assert!(matches!(result.unwrap_err(), StauError::ConflictingFile(_)));
+        assert!(matches!(result.unwrap_err(), StauError::RenderedDrift(_)));
         // The existing file is untouched.
         assert_eq!(fs::read_to_string(&target).unwrap(), "existing");
     }
@@ -841,7 +887,94 @@ mod tests {
             target.clone(),
             "rendered".to_string(),
         )];
-        let result = check_conflicts(&mappings);
+        let result = check_conflicts(&mappings, false);
+        assert!(matches!(result.unwrap_err(), StauError::RenderedDrift(_)));
+    }
+
+    #[test]
+    fn test_check_conflicts_skips_regular_file_with_refresh() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("src.tmpl");
+        let target = temp_dir.path().join("target");
+        fs::write(&source, "source").unwrap();
+        fs::write(&target, "different").unwrap();
+
+        let mappings = vec![SymlinkMapping::render(
+            source.clone(),
+            target.clone(),
+            "rendered".to_string(),
+        )];
+        // A drifted regular file is not a conflict under --refresh-rendered.
+        check_conflicts(&mappings, true).unwrap();
+    }
+
+    #[test]
+    fn test_refresh_rendered_overwrites_drift() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("src.tmpl");
+        let target = temp_dir.path().join("target");
+        fs::write(&source, "source").unwrap();
+        fs::write(&target, "drifted").unwrap();
+
+        refresh_rendered(&source, &target, "rendered", false).unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "rendered");
+    }
+
+    #[test]
+    fn test_refresh_rendered_preserves_exec_bit() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("bin.tmpl");
+        let target = temp_dir.path().join("bin");
+        fs::write(&source, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(&target, "old").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
+
+        refresh_rendered(&source, &target, "#!/bin/sh\n", false).unwrap();
+
+        let mode = fs::metadata(&target).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111, "executable bits preserved");
+    }
+
+    #[test]
+    fn test_refresh_rendered_rejects_symlink_target() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("src.tmpl");
+        let target = temp_dir.path().join("target");
+        fs::write(&source, "source").unwrap();
+        unix_fs::symlink("/some/where", &target).unwrap();
+
+        let result = refresh_rendered(&source, &target, "rendered", false);
         assert!(matches!(result.unwrap_err(), StauError::ConflictingFile(_)));
+        assert!(target.symlink_metadata().unwrap().is_symlink());
+    }
+
+    #[test]
+    fn test_refresh_rendered_dry_run_writes_nothing() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("src.tmpl");
+        let target = temp_dir.path().join("target");
+        fs::write(&source, "source").unwrap();
+        fs::write(&target, "drifted").unwrap();
+
+        refresh_rendered(&source, &target, "rendered", true).unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "drifted");
+    }
+
+    #[test]
+    fn test_refresh_rendered_creates_absent_target() {
+        let temp_dir = TempDir::new().unwrap();
+        let source = temp_dir.path().join("src.tmpl");
+        let target = temp_dir.path().join("nested/target");
+        fs::write(&source, "source").unwrap();
+
+        refresh_rendered(&source, &target, "rendered", false).unwrap();
+
+        assert!(target.is_file());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "rendered");
     }
 }

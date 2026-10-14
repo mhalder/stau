@@ -22,6 +22,11 @@ pub enum StauError {
     ConflictingFile(PathBuf),
 
     #[error(
+        "Rendered target drifted: {0}\nHint: The rendered file at this location differs from the current render. Re-render it with 'stau restow <package>' or refresh it in place with 'stau install --refresh-rendered <package>'. Either:\n  - Remove the existing file manually\n  - Adopt the existing file with 'stau adopt <package> {0}'"
+    )]
+    RenderedDrift(PathBuf),
+
+    #[error(
         "Permission denied: {0}\nHint: You may need elevated privileges. Try running with 'sudo' or check file permissions."
     )]
     PermissionDenied(String),
@@ -74,6 +79,7 @@ impl StauError {
             StauError::PackageNotFound(_) => 1,
             StauError::ProfileNotFound(_) => 1,
             StauError::ConflictingFile(_) => 2,
+            StauError::RenderedDrift(_) => 2,
             StauError::PermissionDenied(_) => 3,
             StauError::SetupScriptFailed { .. } => 4,
             StauError::TeardownScriptFailed { .. } => 4,
@@ -93,7 +99,7 @@ impl StauError {
         match self {
             StauError::PackageNotFound(_) => "not_found",
             StauError::ProfileNotFound(_) => "not_found",
-            StauError::ConflictingFile(_) => "conflict",
+            StauError::ConflictingFile(_) | StauError::RenderedDrift(_) => "conflict",
             StauError::PermissionDenied(_) => "permission",
             StauError::SetupScriptFailed { .. } | StauError::TeardownScriptFailed { .. } => {
                 "script"

@@ -34,6 +34,8 @@ pub struct PackageOutcome {
     /// The teardown script failed but the uninstall carried on (non-fatal:
     /// symlinks were still removed and files copied back).
     pub teardown_failed: bool,
+    /// The number of drifted rendered targets refreshed by an `install` run.
+    pub rendered_refreshed: Option<usize>,
 }
 
 impl PackageOutcome {
@@ -47,6 +49,7 @@ impl PackageOutcome {
         Self {
             error: Some(error),
             teardown_failed: false,
+            rendered_refreshed: None,
         }
     }
 }
@@ -64,6 +67,8 @@ struct PackageResult {
     error_kind: Option<&'static str>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     teardown_failed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rendered_refreshed: Option<usize>,
 }
 
 /// The JSON summary printed for `--json` batch runs.
@@ -135,6 +140,7 @@ where
             exit_code: outcome.error.as_ref().map(|e| e.exit_code()),
             error_kind: outcome.error.as_ref().map(|e| e.kind()),
             teardown_failed: outcome.teardown_failed,
+            rendered_refreshed: outcome.rendered_refreshed,
         });
 
         if run.verbose && !run.json {

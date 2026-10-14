@@ -94,6 +94,7 @@ pub fn uninstall_package_internal(
             return PackageOutcome {
                 error: Some(e),
                 teardown_failed,
+                rendered_refreshed: None,
             };
         }
     };
@@ -116,6 +117,7 @@ pub fn uninstall_package_internal(
         return PackageOutcome {
             error: None,
             teardown_failed,
+            rendered_refreshed: None,
         };
     }
 
@@ -125,11 +127,13 @@ pub fn uninstall_package_internal(
             PackageOutcome {
                 error: None,
                 teardown_failed,
+                rendered_refreshed: None,
             }
         }
         Err(e) => PackageOutcome {
             error: Some(e),
             teardown_failed,
+            rendered_refreshed: None,
         },
     }
 }
