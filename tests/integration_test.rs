@@ -3705,6 +3705,201 @@ fn test_template_install_status_drift_restow_uninstall() {
 }
 
 #[test]
+fn test_install_refresh_rendered_rewrites_drift() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir_all(xdg.join("stau")).unwrap();
+    fs::write(xdg.join("stau/machine.toml"), "[user]\nname = \"Alice\"\n").unwrap();
+
+    let conf = stau_dir.join("demo/.config/app/conf.tmpl");
+    fs::create_dir_all(conf.parent().unwrap()).unwrap();
+    fs::write(&conf, "x = {{ user.name }}\n").unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    assert!(run(&["install", "demo"]).status.success());
+    let target = target_dir.join(".config/app/conf");
+    assert_eq!(fs::read_to_string(&target).unwrap(), "x = Alice\n");
+
+    // Drift the rendered target: the default install still conflicts, and the
+    // opt-in flag re-renders it in place.
+    fs::write(&target, "x = changed\n").unwrap();
+    let output = run(&["install", "demo"]);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "plain install must conflict: {output:?}"
+    );
+    assert_eq!(fs::read_to_string(&target).unwrap(), "x = changed\n");
+
+    let output = run(&["install", "demo", "--refresh-rendered"]);
+    assert!(output.status.success(), "refresh failed: {output:?}");
+    assert_eq!(fs::read_to_string(&target).unwrap(), "x = Alice\n");
+}
+
+#[test]
+fn test_install_refresh_rendered_still_conflicts_on_symlink() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir_all(xdg.join("stau")).unwrap();
+    fs::write(xdg.join("stau/machine.toml"), "[user]\nname = \"Alice\"\n").unwrap();
+
+    let pkg = stau_dir.join("pkg");
+    fs::create_dir_all(pkg.join(".config/app")).unwrap();
+    fs::write(pkg.join(".config/app/conf.tmpl"), "x = {{ user.name }}\n").unwrap();
+    fs::write(pkg.join(".rc"), "content\n").unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    assert!(run(&["install", "pkg"]).status.success());
+    let conf = target_dir.join(".config/app/conf");
+    let rc = target_dir.join(".rc");
+    assert_eq!(fs::read_to_string(&conf).unwrap(), "x = Alice\n");
+    assert!(rc.is_symlink());
+
+    // Drift the rendered target and turn the symlink into a conflicting file.
+    fs::write(&conf, "x = drifted\n").unwrap();
+    fs::remove_file(&rc).unwrap();
+    fs::write(&rc, "conflict\n").unwrap();
+
+    let output = run(&["install", "pkg", "--refresh-rendered"]);
+    assert_eq!(output.status.code(), Some(2), "output: {output:?}");
+    // The symlink conflict aborts the package before any render is refreshed.
+    assert_eq!(fs::read_to_string(&conf).unwrap(), "x = drifted\n");
+}
+
+#[test]
+fn test_install_refresh_rendered_dry_run_writes_nothing() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir_all(xdg.join("stau")).unwrap();
+    fs::write(xdg.join("stau/machine.toml"), "[user]\nname = \"Alice\"\n").unwrap();
+
+    let conf = stau_dir.join("demo/.config/app/conf.tmpl");
+    fs::create_dir_all(conf.parent().unwrap()).unwrap();
+    fs::write(&conf, "x = {{ user.name }}\n").unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    assert!(run(&["install", "demo"]).status.success());
+    let target = target_dir.join(".config/app/conf");
+    fs::write(&target, "x = changed\n").unwrap();
+
+    let output = run(&["install", "demo", "--refresh-rendered", "--dry-run"]);
+    assert!(output.status.success(), "dry-run failed: {output:?}");
+    assert_eq!(
+        fs::read_to_string(&target).unwrap(),
+        "x = changed\n",
+        "dry-run must leave the target untouched"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("(would refresh)"), "stdout: {stdout}");
+}
+
+#[test]
+fn test_install_json_reports_rendered_refreshed() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir_all(xdg.join("stau")).unwrap();
+    fs::write(xdg.join("stau/machine.toml"), "[user]\nname = \"Alice\"\n").unwrap();
+
+    let conf = stau_dir.join("demo/.config/app/conf.tmpl");
+    fs::create_dir_all(conf.parent().unwrap()).unwrap();
+    fs::write(&conf, "x = {{ user.name }}\n").unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(stau_binary())
+            .env("STAU_DIR", &stau_dir)
+            .env("STAU_TARGET", &target_dir)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    // A fresh install reports the field, present even when nothing refreshed.
+    let output = run(&["install", "demo", "--json"]);
+    assert!(output.status.success(), "install --json failed: {output:?}");
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid JSON");
+    assert_eq!(value["packages"][0]["rendered_refreshed"], 0);
+
+    // Drift and refresh: the field reports the refreshed count.
+    let target = target_dir.join(".config/app/conf");
+    fs::write(&target, "x = changed\n").unwrap();
+    let output = run(&["install", "demo", "--refresh-rendered", "--json"]);
+    assert!(output.status.success(), "refresh --json failed: {output:?}");
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid JSON");
+    assert_eq!(value["packages"][0]["rendered_refreshed"], 1);
+}
+
+#[test]
+fn test_install_refresh_rendered_broken_template_exits_6() {
+    let temp_dir = TempDir::new().unwrap();
+    let stau_dir = temp_dir.path().join("dotfiles");
+    let target_dir = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg");
+    fs::create_dir(&stau_dir).unwrap();
+    fs::create_dir(&target_dir).unwrap();
+    fs::create_dir(&xdg).unwrap();
+
+    let conf = stau_dir.join("demo/.config/app/conf.tmpl");
+    fs::create_dir_all(conf.parent().unwrap()).unwrap();
+    fs::write(&conf, "x = {{ missing.var }}\n").unwrap();
+
+    let output = Command::new(stau_binary())
+        .env("STAU_DIR", &stau_dir)
+        .env("STAU_TARGET", &target_dir)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .args(["install", "demo", "--refresh-rendered"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(6), "output: {output:?}");
+}
+
+#[test]
 fn test_data_command_toml_and_json() {
     let temp_dir = TempDir::new().unwrap();
     let stau_dir = temp_dir.path().join("dotfiles");
