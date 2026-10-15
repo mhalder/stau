@@ -1,0 +1,61 @@
+name: Bug report
+description: Report a bug in stau
+body:
+  - type: input
+    id: version
+    attributes:
+      label: stau version
+      description: Output of `stau --version`.
+      placeholder: "stau 3.1.1"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      description: e.g. Ubuntu 24.04, Fedora 41.
+      placeholder: "Ubuntu 24.04"
+    validations:
+      required: true
+  - type: input
+    id: rust-version
+    attributes:
+      label: Rust version (if built from source)
+      description: Output of `rustc --version`.
+      placeholder: "rustc 1.88.0"
+    validations:
+      required: false
+  - type: textarea
+    id: layout
+    attributes:
+      label: Dotfiles layout
+      description: |
+        How the dotfiles directory is laid out, if it is relevant: the value of
+        `STAU_DIR` and `STAU_TARGET`, the package names, whether the files are
+        symlinks or rendered templates, and any `setup.sh` or `teardown.sh`
+        scripts involved.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: command
+    attributes:
+      label: Command line
+      description: The exact command line you ran.
+      placeholder: "stau install ghostty --dry-run"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What actually happened, including the exit code.
+    validations:
+      required: true

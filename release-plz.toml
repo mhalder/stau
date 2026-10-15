@@ -1,0 +1,58 @@
+# Release automation.
+#
+# A conventional commit merged into main opens or updates a release PR that
+# bumps the version in Cargo.toml and Cargo.lock and writes the CHANGELOG.
+# Merging that PR is the release: the release-plz release job creates the
+# v{{version}} tag and the GitHub Release and publishes to crates.io through
+# Trusted Publishing, then dispatches release.yml, which builds and attaches
+# the binaries.
+#
+# The commit type decides the bump and whether a release happens at all:
+#
+#   feat     minor            a feature
+#   fix      patch            a bug fix
+#   perf     patch            "Changed"
+#   refactor patch            "Changed"
+#   revert   patch            "Removed"
+#   <type>!  breaking         released whatever the type, always in the changelog
+#   build, chore, ci, docs, style, test
+#            no release, no changelog entry
+#
+# Anything else (an unrecognised type) is grouped as "Other" and released only
+# as part of a release some other commit caused.
+[workspace]
+repo_url = "https://github.com/mhalder/stau"
+# A release happens only when the release PR is merged, not on every main
+# commit; releasing on every commit races the repository's linear merge.
+release_always = false
+# The tag, the GitHub Release, and the crates.io publish are all release-plz's.
+# git_only is deliberately NOT set: it would skip `cargo publish` and kill the
+# crates.io publish.
+git_release_enable = true
+git_tag_name = "v{{version}}"
+pr_labels = ["release"]
+# A feature bumps the minor version before 1.0 too.
+features_always_increment_minor = true
+# cargo-semver-checks needs a library target; this crate is a binary.
+semver_check = false
+release_commits = "^(feat|fix|perf|refactor|revert)(\\([^)]*\\))?!?:|^[a-z]+(\\([^)]*\\))?!:"
+
+[changelog]
+# A breaking commit stays in the changelog even when its type is skipped below.
+protect_breaking_commits = true
+header = """# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]"""
+commit_parsers = [
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^perf", group = "Changed" },
+  { message = "^refactor", group = "Changed" },
+  { message = "^revert", group = "Removed" },
+  { message = "^(build|chore|ci|docs|style|test)", skip = true },
+]

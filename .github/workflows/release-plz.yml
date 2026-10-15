@@ -1,0 +1,113 @@
+name: Release-plz
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # Once the release PR is merged, tag the release and publish it. release-plz
+  # creates the tag, the GitHub Release, and the crates.io publish (through
+  # Trusted Publishing, so this job carries id-token: write and sets no
+  # CARGO_REGISTRY_TOKEN). The tag then has no `push: tags` run -- a tag pushed
+  # with the default GITHUB_TOKEN starts no workflow -- so this job dispatches
+  # the binary matrix itself.
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'mhalder'
+    # crates.io Trusted Publishing matches this environment name in the OIDC
+    # token, so the exchange is refused if this line and the crates.io
+    # publisher config drift. The environment carries no protection rules, so
+    # it is a trust constraint and a deployment record, not a gate.
+    environment: release
+    permissions:
+      contents: write
+      # release-plz checks whether the merged commit belongs to a release PR.
+      pull-requests: read
+      # Trusted Publishing: release-plz exchanges the OIDC token for a crates.io
+      # token itself, so no CARGO_REGISTRY_TOKEN exists anywhere.
+      id-token: write
+      # Dispatching release.yml with a GITHUB_TOKEN-created event is one of the
+      # two events that token may still start (the other is workflow_dispatch's
+      # sibling repository_dispatch); a GITHUB_TOKEN tag push starts nothing.
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # release-plz walks history to find the commits to release.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: stable
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          # Bumped by hand: Dependabot does not track tool versions.
+          tool: release-plz@0.3.169
+      # The release-plz action configures this for you; the CLI does not.
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Tag the release and publish
+        run: release-plz release
+        env:
+          # The CLI reads GIT_TOKEN; the release-plz action maps GITHUB_TOKEN to
+          # it, but this workflow runs the CLI directly.
+          GIT_TOKEN: ${{ github.token }}
+      - name: Start the binary matrix when the release has no assets yet
+        # A tag pushed with the default GITHUB_TOKEN starts no workflow, so
+        # workflow_dispatch is the only trigger for the matrix. Gate it on the
+        # release's assets rather than on tag existence: a re-run whose first
+        # matrix never attached anything finds a tag with no SHA256SUMS and
+        # dispatches again, instead of silently doing nothing.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(awk '/^\[/ { in_package = ($0 == "[package]") } in_package && /^version[[:space:]]*=/ { sub(/#.*$/, ""); sub(/^[^=]*=[[:space:]]*/, ""); gsub(/[[:space:]"]/, ""); print; exit }' Cargo.toml)
+          tag="v${version}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            echo "release-plz released nothing for $tag"
+          elif gh release view "$tag" --json assets --jq '.assets[].name' | grep -qx SHA256SUMS; then
+            echo "$tag already carries its assets"
+          else
+            gh workflow run release.yml -f tag="$tag"
+          fi
+
+  # Open or update the release PR: version bump, Cargo.lock, CHANGELOG.
+  release-pr:
+    name: Release PR
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'mhalder'
+    permissions:
+      contents: write
+      pull-requests: write
+    # The release PR is updated on every push to main; a cancelled update
+    # leaves the PR stale.
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # release-plz opens the PR and commits the bump to its branch, so it
+          # needs the history that leads up to main.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: stable
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          # Bumped by hand: Dependabot does not track tool versions.
+          tool: release-plz@0.3.169
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Update the release PR
+        run: release-plz release-pr
+        env:
+          # The CLI reads GIT_TOKEN, not GITHUB_TOKEN.
+          GIT_TOKEN: ${{ github.token }}
