@@ -1,5 +1,7 @@
 use crate::error::{Result, StauError, map_io_error};
 use crate::symlink::{MappingKind, SymlinkMapping};
+use minijinja::syntax::SyntaxConfig;
+use minijinja::value::Serde;
 use minijinja::{Environment, UndefinedBehavior};
 use serde_json::{Map, Value};
 use std::fs;
@@ -102,7 +104,12 @@ pub fn render(source: &Path, data: &Value) -> Result<String> {
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Strict);
     // A trailing newline is content in a dotfile; render bytes exactly.
-    env.set_keep_trailing_newline(true);
+    env.set_syntax(
+        SyntaxConfig::builder()
+            .keep_trailing_newline(true)
+            .build()
+            .expect("static syntax config is valid"),
+    );
     let name = source.display().to_string();
     env.add_template_owned(&name, contents)
         .map_err(|e| template_error(source, &e))?;
@@ -110,7 +117,7 @@ pub fn render(source: &Path, data: &Value) -> Result<String> {
         .get_template(&name)
         .map_err(|e| template_error(source, &e))?;
     template
-        .render(data)
+        .render(Serde(data))
         .map_err(|e| template_error(source, &e))
 }
 
