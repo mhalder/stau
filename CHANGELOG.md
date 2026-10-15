@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0](https://github.com/mhalder/stau/compare/v3.1.1...v4.0.0) - 2026-10-15
+
+### Added
+
+- *(install)* refresh drifted rendered targets with --refresh-rendered
+- *(commands)* thread template data through install/status/verify and add data/render
+- *(symlink)* add render mappings with kind-aware write/remove helpers
+- *(template)* add minijinja/toml rendering engine and data model
+- *(cli)* add completion command for bash, zsh and fish
+- *(list)* redesign output around per-package state and add --long
+- *(status)* report a hook_only package state
+- *(cli)* automation primitives for multi-target provisioning
+- *(clean)* add --deep to find links below removed package directories
+
+### Changed
+
+- split main.rs into cli and per-command modules
+- remove duplication from batch operations
+- reduce cli cognitive complexity
+
+### Fixed
+
+- *(install)* report rendered_refreshed on failed installs
+- *(adopt)* render template once and report render error directly
+- *(template)* skip malformed os-release lines and repair rendered mode
+- *(uninstall)* make drift warning best-effort for unreadable targets
+- *(package)* reject file/directory target prefix collisions
+- *(adopt)* render template before moving to prevent data loss
+- *(status)* report render failures as a per-file error state instead of aborting
+- *(template)* decouple discovery from rendering so uninstall works on broken templates
+- *(cli)* restore the default SIGPIPE disposition
+- *(cli)* address cross-review findings on automation primitives
+- *(uninstall)* continue past a failed file and restore its symlink
+- *(cli)* [**breaking**] exit non-zero when a package fails during --all
+- *(script)* report a missing target directory before running scripts
+- *(error)* keep path context on IO errors
+- *(script)* report scripts in dry-run without --verbose
+- *(adopt)* fall back to copy and remove across filesystems
+- *(script)* run setup and teardown scripts with inherited stdio
+- *(adopt)* resolve relative paths and check all files before moving
+- *(clean)* only remove broken symlinks that point into the package
+- *(install)* check all targets for conflicts before linking
+- *(package)* only ignore setup and teardown scripts at the package root
+- *(cli)* reject package names that resolve outside STAU_DIR
+- *(config)* resolve relative STAU_DIR to an absolute path
+- run setup for packages without symlinks
+
 ## [3.1.1](https://github.com/mhalder/stau/compare/v3.1.0...v3.1.1) (2026-03-16)
 
 ### Bug Fixes
