@@ -1,6 +1,8 @@
 # stau
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![crates.io](https://img.shields.io/crates/v/stau.svg)](https://crates.io/crates/stau)
+[![CI](https://github.com/mhalder/stau/actions/workflows/ci.yml/badge.svg)](https://github.com/mhalder/stau/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](https://github.com/mhalder/stau#license)
 
 A modern dotfile manager written in Rust that combines GNU Stow-style symlink management with powerful setup automation.
 
@@ -26,6 +28,18 @@ Traditional tools like GNU Stow excel at symlink management but lack automation 
 - **Linux Native**: Written in Rust for Linux with proper home directory and XDG detection
 
 ## Installation
+
+```bash
+cargo install stau
+```
+
+To install the unreleased `main` instead:
+
+```bash
+cargo install --git https://github.com/mhalder/stau
+```
+
+Prebuilt binaries are published on the [GitHub Releases](https://github.com/mhalder/stau/releases) page for Linux x86_64 and aarch64, as static musl builds.
 
 ### From source
 
@@ -632,8 +646,8 @@ See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
 
 ## License
 
-[MIT](LICENSE)
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.
 
 ## Contributing
 
-Private project. Contributions handled internally.
+See [CONTRIBUTING.md](CONTRIBUTING.md).

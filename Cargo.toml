@@ -2,11 +2,11 @@
 name = "stau"
 version = "3.1.1"
 edition = "2024"
-license = "MIT"
-authors = ["mhalder"]
-publish = false
-repository = "https://github.com/mhalder/stau"
+rust-version = "1.88"
 description = "A modern dotfile manager with GNU Stow-style symlink management and automated setup scripts"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mhalder/stau"
+homepage = "https://github.com/mhalder/stau"
 readme = "README.md"
 keywords = ["dotfiles", "symlink", "stow", "configuration", "cli"]
 categories = ["command-line-utilities", "config"]

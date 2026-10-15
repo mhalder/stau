@@ -1,31 +1,11 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-
-### ⚠ BREAKING CHANGES
-
-* **list:** the human-readable output changed from bracketed labels (`[installed]`, `[not installed]`, `[partial]`, `[hook only]`) to a per-package state token (`ok`, `partial`, `missing`, `conflict`, `hook`) with a notes column. Scripts that parse `stau list` must be updated; `stau status --json` remains the machine-readable interface.
-
-### Features
-
-* **templating:** render `*.tmpl` sources to regular files at their target with minijinja, using per-machine data from `stau.*` facts, `<STAU_DIR>/.stau/data.toml`, `~/.config/stau/machine.toml`, and `--set KEY=VALUE` (deep-merged; missing variables are strict errors)
-* **cli:** add `stau data` (print the merged data as TOML or `--json`; `stau data set <key> <value>` upserts into `machine.toml`) and `stau render <file>` (render one template to stdout)
-* **cli:** add `adopt --template`, storing the adopted file as `<rel>.tmpl` and rendering it back to the target
-* **status:** add the `drift` file state (a rendered target whose bytes differ from the current render) and the `error` file state (a template that failed to render) to `status`/`list` output, the JSON envelope, and `verify` mismatches
-* **list:** report the new package state token (`ok`, `partial`, `missing`, `conflict`, `hook`) with a notes column, and add `--long` (`-l`) to show link counts and hooks for every package
-* **cli:** add `stau completion <shell>`, printing a static completion script for bash, elvish, fish, powershell, or zsh; it runs without a `STAU_DIR`
-* **cli:** hint `--target` as a directory and `adopt` file arguments as paths, so shells complete paths for them
-* **install:** add `--refresh-rendered` to re-render a drifted rendered (`*.tmpl`) target in place instead of failing with a conflict; `--json` reports the count per package as `rendered_refreshed`
-
-### Bug Fixes
-
-* **install:** fail on a drifted rendered target with a hint naming `stau restow` and `stau install --refresh-rendered` instead of a generic conflicting-file hint
-* **cli:** restore the default `SIGPIPE` disposition, so piping long output into a command that exits early (`stau status pkg | head`) terminates the way any Unix command does instead of panicking with exit code 101
 
 ## [3.1.1](https://github.com/mhalder/stau/compare/v3.1.0...v3.1.1) (2026-03-16)
 
