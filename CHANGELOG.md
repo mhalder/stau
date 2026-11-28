@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.1](https://github.com/mhalder/stau/compare/v4.0.0...v4.0.1) - 2026-11-28
+
+### Fixed
+
+- *(data)* write machine.toml atomically
+
 ## [4.0.0](https://github.com/mhalder/stau/compare/v3.1.1...v4.0.0) - 2026-10-15
 
 ### Added
