@@ -1,6 +1,6 @@
 [package]
 name = "stau"
-version = "4.0.0"
+version = "4.0.1"
 edition = "2024"
 rust-version = "1.88"
 description = "A modern dotfile manager with GNU Stow-style symlink management and automated setup scripts"
