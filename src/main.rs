@@ -5,6 +5,7 @@ mod cli;
 mod commands;
 mod config;
 mod error;
+mod fsutil;
 mod options;
 mod package;
 mod profile;

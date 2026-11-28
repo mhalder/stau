@@ -1,9 +1,10 @@
 use crate::cli::DataCommand;
 use crate::config::Config;
 use crate::error::{Result, StauError, map_io_error};
+use crate::fsutil;
 use crate::template;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Entry point for `stau data`.
 ///
@@ -79,9 +80,28 @@ fn set_machine_value(key: &str, value: &str, dry_run: bool) -> Result<()> {
             map_io_error(e, format!("Cannot create directory: {}", parent.display()))
         })?;
     }
-    fs::write(&path, content)
-        .map_err(|e| map_io_error(e, format!("Cannot write data file: {}", path.display())))?;
+    write_data_file(&path, &content)
+}
 
+/// Writes `content` over `path` atomically, keeping the file's permission bits
+/// and, when `path` is a symlink, the link itself.
+///
+/// A plain truncate-and-write leaves `machine.toml` empty or half-written when
+/// the write fails partway, and stau then refuses to parse the file it just
+/// corrupted, so every later `stau data set` fails too.
+fn write_data_file(path: &Path, content: &str) -> Result<()> {
+    let target = fsutil::resolve_symlink_target(path);
+    let permissions = fs::metadata(&target)
+        .ok()
+        .map(|metadata| metadata.permissions());
+
+    fsutil::write_atomic(&target, content.as_bytes())?;
+
+    if let Some(permissions) = permissions {
+        fs::set_permissions(&target, permissions).map_err(|e| {
+            map_io_error(e, format!("Cannot set permissions: {}", target.display()))
+        })?;
+    }
     Ok(())
 }
 
@@ -148,6 +168,136 @@ fn upsert_dotted(root: &mut toml::Value, key: &str, value: toml::Value) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use tempfile::TempDir;
+
+    /// Points `dirs::config_dir` at a temporary XDG directory and creates the
+    /// `stau` subdirectory, so `machine_toml_path` resolves inside `tmp`.
+    fn hermetic_config_home(tmp: &TempDir) -> PathBuf {
+        let xdg = tmp.path().join("config");
+        fs::create_dir_all(xdg.join("stau")).unwrap();
+        xdg
+    }
+
+    #[test]
+    fn test_set_machine_value_replaces_the_file_atomically() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = hermetic_config_home(&tmp);
+        let path = xdg.join("stau").join("machine.toml");
+        fs::write(&path, "a = 1\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let inode_before = fs::metadata(&path).unwrap().ino();
+
+        temp_env::with_var("XDG_CONFIG_HOME", Some(xdg.to_str().unwrap()), || {
+            set_machine_value("host.name", "x", false).unwrap();
+        });
+
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("a = 1"), "contents: {contents}");
+        assert!(contents.contains("name"), "contents: {contents}");
+        assert_ne!(
+            inode_before,
+            fs::metadata(&path).unwrap().ino(),
+            "machine.toml should be replaced, not truncated in place"
+        );
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the existing file's mode should survive");
+    }
+
+    #[test]
+    fn test_set_machine_value_writes_through_a_symlinked_file() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = hermetic_config_home(&tmp);
+        let real_dir = tmp.path().join("dotfiles");
+        fs::create_dir_all(&real_dir).unwrap();
+        let real = real_dir.join("machine.toml");
+        fs::write(&real, "a = 1\n").unwrap();
+        let link = xdg.join("stau").join("machine.toml");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        temp_env::with_var("XDG_CONFIG_HOME", Some(xdg.to_str().unwrap()), || {
+            set_machine_value("host.name", "x", false).unwrap();
+        });
+
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "a dotfiles-managed machine.toml must stay a symlink"
+        );
+        let contents = fs::read_to_string(&real).unwrap();
+        assert!(contents.contains("name"), "contents: {contents}");
+    }
+
+    #[test]
+    fn test_set_machine_value_recovers_from_a_stale_temp_file() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = hermetic_config_home(&tmp);
+        let dir = xdg.join("stau");
+        let path = dir.join("machine.toml");
+        fs::write(&path, "a = 1\n").unwrap();
+        // The first temporary name `write_atomic` picks is taken, so it has to
+        // move on to the next one instead of failing or spinning.
+        fs::write(
+            dir.join(format!(".machine.toml.{}.0.tmp", std::process::id())),
+            "stale",
+        )
+        .unwrap();
+
+        temp_env::with_var("XDG_CONFIG_HOME", Some(xdg.to_str().unwrap()), || {
+            set_machine_value("host.name", "x", false).unwrap();
+        });
+
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("name"), "contents: {contents}");
+        assert!(contents.contains("a = 1"), "contents: {contents}");
+    }
+
+    #[test]
+    fn test_set_machine_value_creates_the_target_of_a_relative_dangling_link() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = hermetic_config_home(&tmp);
+        let real_dir = tmp.path().join("dotfiles");
+        fs::create_dir_all(&real_dir).unwrap();
+        let link = xdg.join("stau").join("machine.toml");
+        std::os::unix::fs::symlink("../../dotfiles/machine.toml", &link).unwrap();
+
+        temp_env::with_var("XDG_CONFIG_HOME", Some(xdg.to_str().unwrap()), || {
+            set_machine_value("host.name", "x", false).unwrap();
+        });
+
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the dangling link should be kept and its destination created"
+        );
+        let real = real_dir.join("machine.toml");
+        let contents = fs::read_to_string(&real).unwrap();
+        assert!(contents.contains("name"), "contents: {contents}");
+    }
+
+    #[test]
+    fn test_set_machine_value_reports_an_unreadable_file() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = hermetic_config_home(&tmp);
+        // Reading a directory fails with something other than `NotFound`, so
+        // it must be reported rather than treated as an absent file and
+        // overwritten.
+        fs::create_dir(xdg.join("stau").join("machine.toml")).unwrap();
+
+        let err = temp_env::with_var("XDG_CONFIG_HOME", Some(xdg.to_str().unwrap()), || {
+            set_machine_value("host.name", "x", false)
+        })
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("Cannot read data file"),
+            "message: {err}"
+        );
+    }
 
     #[test]
     fn test_parse_value_types_literals() {

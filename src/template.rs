@@ -464,6 +464,33 @@ mod tests {
     }
 
     #[test]
+    fn test_deeply_nested_data_file_is_a_parse_error_not_a_crash() {
+        let tmp = TempDir::new().unwrap();
+        let stau_dir = hermetic_stau_dir(&tmp);
+        let xdg = tmp.path().join("xdg");
+        fs::create_dir_all(stau_dir.join(".stau")).unwrap();
+        fs::create_dir_all(&xdg).unwrap();
+        // `toml_parser` refuses input past its recursion depth instead of
+        // recursing until the stack overflows (upstream 1.1.6, after a
+        // recovery path let its depth counter go negative). stau only has to
+        // keep reporting that as a template error.
+        let nested = format!("v = {}{}\n", "[".repeat(200), "]".repeat(200));
+        fs::write(stau_dir.join(".stau/data.toml"), nested).unwrap();
+
+        temp_env::with_vars(
+            vec![
+                ("XDG_CONFIG_HOME", Some(xdg.to_str().unwrap())),
+                ("HOME", Some(tmp.path().to_str().unwrap())),
+            ],
+            || {
+                let err = build_data(&stau_dir, &[]).unwrap_err();
+                assert!(matches!(err, StauError::TemplateError(_)), "got {err:?}");
+                assert!(err.to_string().contains("data.toml"), "message: {err}");
+            },
+        );
+    }
+
+    #[test]
     fn test_set_rejects_stau_own_variables() {
         for var in ["STAU_DIR", "STAU_TARGET", "STAU_PACKAGE"] {
             let err = parse_sets(&[format!("{var}=x")]).unwrap_err();

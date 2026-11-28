@@ -1,6 +1,6 @@
 use crate::error::{Result, StauError, map_io_error};
+use crate::fsutil::write_atomic;
 use std::fs;
-use std::io::Write;
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 
@@ -341,59 +341,6 @@ pub fn remove_rendered(target: &Path, dry_run: bool) -> Result<bool> {
         Ok(_) => Ok(false),
         Err(_) => Ok(false),
     }
-}
-
-/// Writes `bytes` to `path` atomically: a unique temporary file in the same
-/// directory, then `fs::rename` over the destination.
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| StauError::InvalidPath(path.to_path_buf()))?;
-
-    let mut tmp_path;
-    let mut counter = 0u64;
-    loop {
-        tmp_path = dir.join(format!(
-            ".{}.{}.{}.tmp",
-            file_name.to_string_lossy(),
-            std::process::id(),
-            counter
-        ));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)
-        {
-            Ok(mut file) => {
-                let result = file
-                    .write_all(bytes)
-                    .and_then(|_| file.sync_all())
-                    .map_err(|e| {
-                        map_io_error(e, format!("Cannot write file: {}", tmp_path.display()))
-                    });
-                if result.is_err() {
-                    let _ = fs::remove_file(&tmp_path);
-                    return result;
-                }
-                break;
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                counter += 1;
-            }
-            Err(e) => {
-                return Err(map_io_error(
-                    e,
-                    format!("Cannot create temporary file: {}", tmp_path.display()),
-                ));
-            }
-        }
-    }
-
-    fs::rename(&tmp_path, path).map_err(|e| {
-        let _ = fs::remove_file(&tmp_path);
-        map_io_error(e, format!("Cannot write file: {}", path.display()))
-    })
 }
 
 /// Copies a file from source to destination, creating parent directories as needed.
